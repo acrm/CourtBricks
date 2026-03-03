@@ -1,13 +1,17 @@
 {
   "name": "courtbricks",
   "private": true,
-  "version": "0.0.0",
+  "version": "2026w10-0.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --pretty false",
+    "test": "echo \"No tests configured\"",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "bump:build": "node scripts/update-version.js",
+    "bump:minor": "node scripts/update-version.js --minor"
   },
   "dependencies": {
     "react": "^19.2.0",

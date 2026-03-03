@@ -8,3 +8,4 @@
 - 2026w10-2.1 — Implement forced landscape, single score, and new controls
 - 2026w10-2.2 — Add tetromino spawning and square grid sizing
 - 2026w10-3.1 — Keep score visible until restart and refine tetris rules
+- 2026w10-4.1 — Add panels with score/settings, tetris gravity, ball trail

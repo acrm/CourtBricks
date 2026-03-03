@@ -4,7 +4,7 @@ export const GAME_CONFIG = {
   paddleSpeedRatio: 0.012,
 
   ballRadiusRatio: 0.018,
-  initialBallSpeedRatio: 0.01,
+  initialBallSpeedRatio: 0.05,
   ballSpeedIncrement: 0,
 
   countdownSeconds: 3,
@@ -25,6 +25,19 @@ export const GAME_CONFIG = {
 
   topBottomBounceColor: 'rgba(255,255,255,0.25)',
   controlsHintColor: 'rgba(255,255,255,0.45)',
+
+  // Panel and margin configuration (at least 10% of screen dimension)
+  minTopBottomPanelRatio: 0.1,
+  minSidePanelRatio: 0.1,
+  panelBackgroundColor: '#1a1a1a',
+  panelBorderColor: 'rgba(255,255,255,0.15)',
+
+  // Ball trail configuration
+  ballTrailLength: 8,
+  ballTrailOpacityStart: 0.4,
+  ballTrailOpacityEnd: 0.05,
+
+  tetrisBlockFallInterval: 500,
 };
 
 export type GameConfig = typeof GAME_CONFIG;

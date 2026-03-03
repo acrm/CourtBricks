@@ -6,7 +6,11 @@
 ## Orientation & Playfield
 - The game runs in forced landscape mode.
 - In portrait device orientation, the canvas is rotated to keep gameplay horizontal.
-- The playfield has a thick border (finger-width on mobile) and all gameplay physics happen inside it.
+- The playfield includes top, bottom, and side panels (at least 10% of screen dimension).
+- Top panel displays the current score.
+- Bottom panel contains a settings button placeholder.
+- Side panels create margins between paddles and the screen edges.
+- All gameplay physics happen inside the central playfield between these panels.
 
 ## Core Layout
 - The field is split into three zones:
@@ -37,9 +41,16 @@
 
 ### Spawn and Fall
 - First tetromino appears after the first paddle hit.
-- On each paddle hit, blocks fall by one row where space is available.
-- Additional standard tetrominoes (I, J, L, O, S, T, Z) continue spawning over time at the top.
+- Only one tetromino is active (falling) at a time.
+- The active tetromino falls one row down at regular intervals (configurable in gameConfig).
+- When any block of the active tetromino hits the bottom or another static block below, the entire tetromino freezes in place.
+- After a tetromino freezes, a new one spawns at the top.
 - All blocks inside one spawned tetromino have the same color.
+
+### Ball Trail
+- The ball leaves a fading trail of its current color behind it.
+- Trail opacity gradually decreases from front to back.
+- Trail length and opacity parameters are configurable.
 
 ### Ball-Block Interaction
 - White ball matches any block color.

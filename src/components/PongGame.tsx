@@ -5,6 +5,7 @@ interface Vec2 { x: number; y: number }
 interface Ball { pos: Vec2; vel: Vec2; radius: number; color: string }
 interface Paddle { y: number; dy: number; height: number }
 interface Block { x: number; y: number; color: string }
+interface ActiveTetromino { blocks: Block[]; lastFallTime: number }
 
 const TETROMINO_SHAPES: ReadonlyArray<ReadonlyArray<Vec2>> = [
   [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }],
@@ -27,9 +28,11 @@ interface GameState {
   countdown: number;
   phaseTimer: number;
   blocks: Block[];
+  activeTetromino: ActiveTetromino | null;
   paddleHitCount: number;
   score: number;
   lastOuterSide: Side | null;
+  ballTrail: Vec2[];
 }
 
 interface Keys {
@@ -56,21 +59,26 @@ interface Bounds {
   bottom: number;
   width: number;
   height: number;
-}
-
-function getBorderWidth(): number {
-  return window.innerWidth < 900 ? GAME_CONFIG.mobileBorderWidth : GAME_CONFIG.desktopBorderWidth;
+  topPanelHeight: number;
+  bottomPanelHeight: number;
+  sidePanelWidth: number;
 }
 
 function getBounds(w: number, h: number): Bounds {
-  const border = getBorderWidth();
+  const topPanelHeight = Math.max(h * GAME_CONFIG.minTopBottomPanelRatio, 60);
+  const bottomPanelHeight = Math.max(h * GAME_CONFIG.minTopBottomPanelRatio, 60);
+  const sidePanelWidth = Math.max(w * GAME_CONFIG.minSidePanelRatio, 80);
+
   return {
-    left: border,
-    right: w - border,
-    top: border,
-    bottom: h - border,
-    width: w - border * 2,
-    height: h - border * 2,
+    left: sidePanelWidth,
+    right: w - sidePanelWidth,
+    top: topPanelHeight,
+    bottom: h - bottomPanelHeight,
+    width: w - sidePanelWidth * 2,
+    height: h - topPanelHeight - bottomPanelHeight,
+    topPanelHeight,
+    bottomPanelHeight,
+    sidePanelWidth,
   };
 }
 
@@ -111,9 +119,11 @@ function makeInitialState(w: number, h: number): GameState {
     countdown: GAME_CONFIG.countdownSeconds,
     phaseTimer: 0,
     blocks: [],
+    activeTetromino: null,
     paddleHitCount: 0,
     score: 0,
     lastOuterSide: null,
+    ballTrail: [],
   };
 }
 
@@ -176,37 +186,21 @@ function spawnTetromino(blocks: Block[]): Block[] {
   return [];
 }
 
-function updateBlocksFall(blocks: Block[]): Block[] {
-  const byColumn = new Map<number, Block[]>();
-
-  blocks.forEach((block) => {
-    if (!byColumn.has(block.x)) {
-      byColumn.set(block.x, []);
+function canTetrominoMoveDown(tetromino: Block[], blocks: Block[]): boolean {
+  return tetromino.every((cell) => {
+    const nextY = cell.y + 1;
+    if (nextY >= GAME_CONFIG.tetrisGridRows) {
+      return false;
     }
-    byColumn.get(block.x)?.push(block);
+    return !blocks.some((block) => block.x === cell.x && block.y === nextY);
   });
-
-  byColumn.forEach((columnBlocks) => {
-    columnBlocks.sort((a, b) => b.y - a.y);
-    const occupied = new Set(columnBlocks.map((block) => block.y));
-
-    for (const block of columnBlocks) {
-      const nextY = block.y + 1;
-      if (nextY >= GAME_CONFIG.tetrisGridRows) {
-        continue;
-      }
-      if (occupied.has(nextY)) {
-        continue;
-      }
-
-      occupied.delete(block.y);
-      occupied.add(nextY);
-      block.y = nextY;
-    }
-  });
-
-  return blocks;
 }
+
+function moveTetrominoDown(tetromino: Block[]): Block[] {
+  return tetromino.map((cell) => ({ ...cell, y: cell.y + 1 }));
+}
+
+
 
 function updatePaddles(
   state: GameState,
@@ -285,6 +279,10 @@ function stepGame(
     leftPaddle: { ...state.leftPaddle },
     rightPaddle: { ...state.rightPaddle },
     blocks: state.blocks.map((block) => ({ ...block })),
+    activeTetromino: state.activeTetromino
+      ? { blocks: state.activeTetromino.blocks.map((b) => ({ ...b })), lastFallTime: state.activeTetromino.lastFallTime }
+      : null,
+    ballTrail: [...state.ballTrail],
   };
 
   const bounds = getBounds(w, h);
@@ -310,6 +308,12 @@ function stepGame(
   }
 
   updatePaddles(s, keys, touch, mouse, paddleSpeed, bounds);
+
+  // Update ball trail
+  s.ballTrail.push({ x: s.ball.pos.x, y: s.ball.pos.y });
+  if (s.ballTrail.length > GAME_CONFIG.ballTrailLength) {
+    s.ballTrail.shift();
+  }
 
   const frameFactor = dt / 16.67;
   const curSpeed = Math.hypot(s.ball.vel.x, s.ball.vel.y);
@@ -370,25 +374,42 @@ function stepGame(
   if (paddleHit) {
     s.paddleHitCount += 1;
 
-    if (s.paddleHitCount === 1) {
+    // Try to spawn tetromino if none exists
+    if (!s.activeTetromino) {
       const newBlocks = spawnTetromino(s.blocks);
       if (newBlocks.length > 0) {
-        s.blocks.push(...newBlocks);
+        s.activeTetromino = { blocks: newBlocks, lastFallTime: Date.now() };
       }
-    } else {
-      s.blocks = updateBlocksFall(s.blocks);
-      if (s.paddleHitCount % 2 === 0) {
+    }
+  }
+
+  // Update active tetromino (gravity)
+  if (s.activeTetromino) {
+    const now = Date.now();
+    const elapsed = now - s.activeTetromino.lastFallTime;
+    
+    if (elapsed >= GAME_CONFIG.tetrisBlockFallInterval) {
+      if (canTetrominoMoveDown(s.activeTetromino.blocks, s.blocks)) {
+        s.activeTetromino.blocks = moveTetrominoDown(s.activeTetromino.blocks);
+        s.activeTetromino.lastFallTime = now;
+      } else {
+        // Freeze tetromino: add to blocks
+        s.blocks.push(...s.activeTetromino.blocks);
+        s.activeTetromino = null;
+
+        // Try to spawn new one
         const newBlocks = spawnTetromino(s.blocks);
         if (newBlocks.length > 0) {
-          s.blocks.push(...newBlocks);
+          s.activeTetromino = { blocks: newBlocks, lastFallTime: Date.now() };
         }
       }
     }
   }
 
   const removed = new Set<number>();
+  const allBlocks = s.activeTetromino ? [...s.blocks, ...s.activeTetromino.blocks] : s.blocks;
 
-  s.blocks.forEach((block, index) => {
+  allBlocks.forEach((block, index) => {
     const blockX = grid.zoneLeft + block.x * grid.blockWidth;
     const blockY = bounds.top + block.y * grid.blockHeight;
 
@@ -418,7 +439,26 @@ function stepGame(
     }
   });
 
-  s.blocks = s.blocks.filter((_, index) => !removed.has(index));
+  // Process removed blocks
+  const staticBlocksCount = s.blocks.length;
+  const removedStatic = new Set<number>();
+  const removedActive = new Set<number>();
+
+  removed.forEach((index) => {
+    if (index < staticBlocksCount) {
+      removedStatic.add(index);
+    } else {
+      removedActive.add(index - staticBlocksCount);
+    }
+  });
+
+  s.blocks = s.blocks.filter((_, index) => !removedStatic.has(index));
+  if (s.activeTetromino) {
+    s.activeTetromino.blocks = s.activeTetromino.blocks.filter((_, index) => !removedActive.has(index));
+    if (s.activeTetromino.blocks.length === 0) {
+      s.activeTetromino = null;
+    }
+  }
 
   const newOuterSide = detectOuterSide(s.ball.pos.x, s.ball.radius, grid.zoneLeft, grid.zoneRight);
   if (newOuterSide !== null) {
@@ -442,9 +482,62 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
   const bounds = getBounds(w, h);
   const grid = getGridDimensions(w, h);
 
+  // Background
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, w, h);
 
+  // Top panel
+  ctx.fillStyle = GAME_CONFIG.panelBackgroundColor;
+  ctx.fillRect(0, 0, w, bounds.topPanelHeight);
+  ctx.strokeStyle = GAME_CONFIG.panelBorderColor;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0, bounds.topPanelHeight - 1, w, 1);
+
+  // Bottom panel
+  ctx.fillStyle = GAME_CONFIG.panelBackgroundColor;
+  ctx.fillRect(0, h - bounds.bottomPanelHeight, w, bounds.bottomPanelHeight);
+  ctx.strokeStyle = GAME_CONFIG.panelBorderColor;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0, h - bounds.bottomPanelHeight, w, 1);
+
+  // Side panels
+  ctx.fillStyle = GAME_CONFIG.panelBackgroundColor;
+  ctx.fillRect(0, bounds.topPanelHeight, bounds.sidePanelWidth, bounds.height);
+  ctx.fillRect(w - bounds.sidePanelWidth, bounds.topPanelHeight, bounds.sidePanelWidth, bounds.height);
+
+  ctx.strokeStyle = GAME_CONFIG.panelBorderColor;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(bounds.sidePanelWidth - 1, bounds.topPanelHeight, 1, bounds.height);
+  ctx.strokeRect(w - bounds.sidePanelWidth, bounds.topPanelHeight, 1, bounds.height);
+
+  // Score in top panel
+  const scoreFontSize = Math.round(bounds.topPanelHeight * 0.5);
+  ctx.font = `bold ${scoreFontSize}px monospace`;
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`SCORE: ${state.score}`, w / 2, bounds.topPanelHeight / 2);
+
+  // Settings button stub in bottom panel
+  const buttonWidth = 120;
+  const buttonHeight = bounds.bottomPanelHeight * 0.6;
+  const buttonX = w - bounds.sidePanelWidth - buttonWidth - 20;
+  const buttonY = h - bounds.bottomPanelHeight / 2 - buttonHeight / 2;
+
+  ctx.fillStyle = 'rgba(100,100,100,0.4)';
+  ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(buttonX, buttonY, buttonWidth, buttonHeight);
+
+  const buttonFontSize = Math.round(buttonHeight * 0.4);
+  ctx.font = `${buttonFontSize}px monospace`;
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('SETTINGS', buttonX + buttonWidth / 2, buttonY + buttonHeight / 2);
+
+  // Tetris zone highlight
   ctx.fillStyle = GAME_CONFIG.tetrisZoneHighlight;
   ctx.fillRect(grid.zoneLeft, bounds.top, grid.zoneWidth, bounds.height);
 
@@ -452,6 +545,7 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
   ctx.lineWidth = 2;
   ctx.strokeRect(grid.zoneLeft, bounds.top, grid.zoneWidth, bounds.height);
 
+  // Blocks (static)
   state.blocks.forEach((block) => {
     const blockX = grid.zoneLeft + block.x * grid.blockWidth;
     const blockY = bounds.top + block.y * grid.blockHeight;
@@ -464,28 +558,56 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
     ctx.strokeRect(blockX + 1, blockY + 1, grid.blockWidth - 2, grid.blockHeight - 2);
   });
 
+  // Active tetromino
+  if (state.activeTetromino) {
+    state.activeTetromino.blocks.forEach((block) => {
+      const blockX = grid.zoneLeft + block.x * grid.blockWidth;
+      const blockY = bounds.top + block.y * grid.blockHeight;
+
+      ctx.fillStyle = block.color;
+      ctx.fillRect(blockX + 1, blockY + 1, grid.blockWidth - 2, grid.blockHeight - 2);
+
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(blockX + 1, blockY + 1, grid.blockWidth - 2, grid.blockHeight - 2);
+    });
+  }
+
+  // Paddles
   ctx.fillStyle = '#fff';
   const leftPaddleX = bounds.left;
   const rightPaddleX = bounds.right - GAME_CONFIG.paddleWidth;
   ctx.fillRect(leftPaddleX, state.leftPaddle.y, GAME_CONFIG.paddleWidth, state.leftPaddle.height);
   ctx.fillRect(rightPaddleX, state.rightPaddle.y, GAME_CONFIG.paddleWidth, state.rightPaddle.height);
 
+  // Ball trail
+  for (let i = 0; i < state.ballTrail.length; i += 1) {
+    const trailPos = state.ballTrail[i];
+    const t = i / Math.max(1, state.ballTrail.length - 1);
+    const opacity = GAME_CONFIG.ballTrailOpacityStart + t * (GAME_CONFIG.ballTrailOpacityEnd - GAME_CONFIG.ballTrailOpacityStart);
+    const radius = state.ball.radius * (0.5 + t * 0.5);
+
+    ctx.beginPath();
+    ctx.arc(trailPos.x, trailPos.y, radius, 0, Math.PI * 2);
+    
+    // Parse color and add opacity
+    const color = state.ball.color;
+    if (color.startsWith('#')) {
+      const r = parseInt(color.slice(1, 3), 16);
+      const g = parseInt(color.slice(3, 5), 16);
+      const b = parseInt(color.slice(5, 7), 16);
+      ctx.fillStyle = `rgba(${r},${g},${b},${opacity})`;
+    } else {
+      ctx.fillStyle = `rgba(255,255,255,${opacity})`;
+    }
+    ctx.fill();
+  }
+
+  // Ball
   ctx.beginPath();
   ctx.arc(state.ball.pos.x, state.ball.pos.y, state.ball.radius, 0, Math.PI * 2);
   ctx.fillStyle = state.ball.color;
   ctx.fill();
-
-  const fontSize = Math.round(h * 0.1);
-  ctx.font = `bold ${fontSize}px monospace`;
-  ctx.fillStyle = 'rgba(255,255,255,0.9)';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  ctx.fillText(String(state.score), w / 2, bounds.top + 8);
-
-  const borderWidth = getBorderWidth();
-  ctx.strokeStyle = GAME_CONFIG.borderColor;
-  ctx.lineWidth = borderWidth;
-  ctx.strokeRect(borderWidth / 2, borderWidth / 2, w - borderWidth, h - borderWidth);
 
   if (state.phase === 'countdown') {
     ctx.fillStyle = 'rgba(0,0,0,0.45)';

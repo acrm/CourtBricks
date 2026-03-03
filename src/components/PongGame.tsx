@@ -1,40 +1,25 @@
-import { useEffect, useRef } from 'react';
-
-const PADDLE_WIDTH = 14;
-const PADDLE_HEIGHT_RATIO = 0.18;
-const BALL_RADIUS_RATIO = 0.018;
-const PADDLE_SPEED_RATIO = 0.012;
-const INITIAL_BALL_SPEED_RATIO = 0.007;
-const BALL_SPEED_INCREMENT = 0.0003;
-const WIN_SCORE = 7;
-
-// Tetris zone constants
-const TETRIS_GRID_COLS = 10;
-const TETRIS_GRID_ROWS = 20;
-const TETRIS_BLOCK_COLORS = ['#FF1744', '#F57C00', '#FBC02D', '#388E3C', '#0277BD']; // Red, Orange, Yellow, Green, Blue
-const BALL_COLOR_WHITE = '#FFFFFF';
-const CENTER_ZONE_START_RATIO = 0.3;
-const CENTER_ZONE_END_RATIO = 0.7;
+import { useEffect, useRef, useState } from 'react';
+import { GAME_CONFIG } from '../config/gameConfig';
 
 interface Vec2 { x: number; y: number }
 interface Ball { pos: Vec2; vel: Vec2; radius: number; color: string }
 interface Paddle { y: number; dy: number; height: number }
-interface Score { left: number; right: number }
 interface Block { x: number; y: number; color: string }
-type Phase = 'countdown' | 'playing' | 'scored' | 'gameover';
+
+type Side = 'left' | 'right';
+type Phase = 'countdown' | 'playing' | 'gameover';
 
 interface GameState {
   ball: Ball;
   leftPaddle: Paddle;
   rightPaddle: Paddle;
-  score: Score;
   phase: Phase;
-  winner: 'left' | 'right' | null;
   countdown: number;
   phaseTimer: number;
   blocks: Block[];
-  ballHitBlockSinceServe: boolean;
   paddleHitCount: number;
+  score: number;
+  lastOuterSide: Side | null;
 }
 
 interface Keys {
@@ -49,96 +34,160 @@ interface TouchControls {
   right: number | null;
 }
 
+interface MouseControls {
+  active: boolean;
+  y: number | null;
+}
+
+interface Bounds {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+function getBorderWidth(): number {
+  return window.innerWidth < 900 ? GAME_CONFIG.mobileBorderWidth : GAME_CONFIG.desktopBorderWidth;
+}
+
+function getBounds(w: number, h: number): Bounds {
+  const border = getBorderWidth();
+  return {
+    left: border,
+    right: w - border,
+    top: border,
+    bottom: h - border,
+    width: w - border * 2,
+    height: h - border * 2,
+  };
+}
+
 function getRandomBlockColor(): string {
-  return TETRIS_BLOCK_COLORS[Math.floor(Math.random() * TETRIS_BLOCK_COLORS.length)];
+  return GAME_CONFIG.blockColors[Math.floor(Math.random() * GAME_CONFIG.blockColors.length)];
 }
 
 function getRandomDifferentColor(currentColor: string): string {
-  const available = TETRIS_BLOCK_COLORS.filter(c => c !== currentColor);
-  return available[Math.floor(Math.random() * available.length)];
+  const available = GAME_CONFIG.blockColors.filter((color) => color !== currentColor);
+  return available[Math.floor(Math.random() * available.length)] ?? GAME_CONFIG.blockColors[0];
 }
 
-function makeBall(w: number, h: number, towardsLeft?: boolean): Ball {
-  const radius = Math.min(w, h) * BALL_RADIUS_RATIO;
-  const speed = Math.min(w, h) * INITIAL_BALL_SPEED_RATIO;
+function makeBall(w: number, h: number, towardLeft?: boolean): Ball {
+  const bounds = getBounds(w, h);
+  const radius = Math.min(bounds.width, bounds.height) * GAME_CONFIG.ballRadiusRatio;
+  const speed = Math.min(bounds.width, bounds.height) * GAME_CONFIG.initialBallSpeedRatio;
   const angle = (Math.random() * Math.PI) / 3 - Math.PI / 6;
-  const dir = towardsLeft === undefined ? (Math.random() < 0.5 ? 1 : -1) : (towardsLeft ? -1 : 1);
+  const dir = towardLeft === undefined ? (Math.random() < 0.5 ? 1 : -1) : (towardLeft ? -1 : 1);
+
   return {
     pos: { x: w / 2, y: h / 2 },
     vel: { x: dir * speed * Math.cos(angle), y: speed * Math.sin(angle) },
     radius,
-    color: BALL_COLOR_WHITE,
+    color: GAME_CONFIG.ballWhiteColor,
   };
 }
 
 function makeInitialState(w: number, h: number): GameState {
-  const paddleHeight = h * PADDLE_HEIGHT_RATIO;
+  const bounds = getBounds(w, h);
+  const paddleHeight = bounds.height * GAME_CONFIG.paddleHeightRatio;
+  const centerPaddleY = bounds.top + bounds.height / 2 - paddleHeight / 2;
+
   return {
     ball: makeBall(w, h),
-    leftPaddle: { y: h / 2 - paddleHeight / 2, dy: 0, height: paddleHeight },
-    rightPaddle: { y: h / 2 - paddleHeight / 2, dy: 0, height: paddleHeight },
-    score: { left: 0, right: 0 },
+    leftPaddle: { y: centerPaddleY, dy: 0, height: paddleHeight },
+    rightPaddle: { y: centerPaddleY, dy: 0, height: paddleHeight },
     phase: 'countdown',
-    winner: null,
-    countdown: 3,
+    countdown: GAME_CONFIG.countdownSeconds,
     phaseTimer: 0,
     blocks: [],
-    ballHitBlockSinceServe: false,
     paddleHitCount: 0,
+    score: 0,
+    lastOuterSide: null,
   };
 }
 
-function getGridDimensions(w: number, h: number): { blockWidth: number; blockHeight: number; zoneLeft: number; zoneRight: number; zoneWidth: number } {
-  const zoneLeft = w * CENTER_ZONE_START_RATIO;
-  const zoneRight = w * CENTER_ZONE_END_RATIO;
+function getGridDimensions(w: number, h: number): {
+  blockWidth: number;
+  blockHeight: number;
+  zoneLeft: number;
+  zoneRight: number;
+  zoneWidth: number;
+} {
+  const bounds = getBounds(w, h);
+  const zoneLeft = bounds.left + bounds.width * GAME_CONFIG.centerZoneStartRatio;
+  const zoneRight = bounds.left + bounds.width * GAME_CONFIG.centerZoneEndRatio;
   const zoneWidth = zoneRight - zoneLeft;
-  const blockWidth = zoneWidth / TETRIS_GRID_COLS;
-  const blockHeight = h / TETRIS_GRID_ROWS;
+  const blockWidth = zoneWidth / GAME_CONFIG.tetrisGridCols;
+  const blockHeight = bounds.height / GAME_CONFIG.tetrisGridRows;
+
   return { blockWidth, blockHeight, zoneLeft, zoneRight, zoneWidth };
 }
 
-function spawnTetrisBlock(): Block {
-  const col = Math.floor(Math.random() * TETRIS_GRID_COLS);
+function spawnTetrisBlock(blocks: Block[]): Block | null {
+  const col = Math.floor(Math.random() * GAME_CONFIG.tetrisGridCols);
+  const canSpawn = !blocks.some((block) => block.x === col && block.y === 0);
+  if (!canSpawn) {
+    return null;
+  }
+
   return {
-    x: Math.floor(col),
+    x: col,
     y: 0,
     color: getRandomBlockColor(),
   };
 }
 
-function getBlocksToFall(blocks: Block[]): Block[] {
-  const grouped = new Map<number, Block[]>();
-  blocks.forEach(b => {
-    if (!grouped.has(b.x)) grouped.set(b.x, []);
-    grouped.get(b.x)!.push(b);
-  });
-  
-  return Array.from(grouped.values()).map(col => col[col.length - 1]);
-}
-
 function updateBlocksFall(blocks: Block[]): Block[] {
-  const falling = getBlocksToFall(blocks);
-  const newBlocks = blocks.map(b => ({ ...b }));
-  
-  falling.forEach(block => {
-    const idx = newBlocks.findIndex(b => b === block);
-    if (idx !== -1 && newBlocks[idx].y < TETRIS_GRID_ROWS - 1) {
-      newBlocks[idx].y += 1;
+  const byColumn = new Map<number, Block[]>();
+
+  blocks.forEach((block) => {
+    if (!byColumn.has(block.x)) {
+      byColumn.set(block.x, []);
+    }
+    byColumn.get(block.x)?.push(block);
+  });
+
+  byColumn.forEach((columnBlocks) => {
+    columnBlocks.sort((a, b) => b.y - a.y);
+    const occupied = new Set(columnBlocks.map((block) => block.y));
+
+    for (const block of columnBlocks) {
+      const nextY = block.y + 1;
+      if (nextY >= GAME_CONFIG.tetrisGridRows) {
+        continue;
+      }
+      if (occupied.has(nextY)) {
+        continue;
+      }
+
+      occupied.delete(block.y);
+      occupied.add(nextY);
+      block.y = nextY;
     }
   });
-  
-  return newBlocks;
-}
 
+  return blocks;
+}
 
 function updatePaddles(
   state: GameState,
   keys: Keys,
   touch: TouchControls,
+  mouse: MouseControls,
   paddleSpeed: number,
-  h: number,
+  bounds: Bounds,
 ): void {
-  // Left paddle
+  if (mouse.active && mouse.y !== null) {
+    const targetY = mouse.y - state.leftPaddle.height / 2;
+    const clampedY = Math.max(bounds.top, Math.min(bounds.bottom - state.leftPaddle.height, targetY));
+    state.leftPaddle.y = clampedY;
+    state.rightPaddle.y = clampedY;
+    state.leftPaddle.dy = 0;
+    state.rightPaddle.dy = 0;
+    return;
+  }
+
   if (touch.left !== null) {
     const targetY = touch.left - state.leftPaddle.height / 2;
     const diff = targetY - state.leftPaddle.y;
@@ -151,7 +200,6 @@ function updatePaddles(
     state.leftPaddle.dy = 0;
   }
 
-  // Right paddle
   if (touch.right !== null) {
     const targetY = touch.right - state.rightPaddle.height / 2;
     const diff = targetY - state.rightPaddle.y;
@@ -165,13 +213,23 @@ function updatePaddles(
   }
 
   state.leftPaddle.y = Math.max(
-    0,
-    Math.min(h - state.leftPaddle.height, state.leftPaddle.y + state.leftPaddle.dy),
+    bounds.top,
+    Math.min(bounds.bottom - state.leftPaddle.height, state.leftPaddle.y + state.leftPaddle.dy),
   );
   state.rightPaddle.y = Math.max(
-    0,
-    Math.min(h - state.rightPaddle.height, state.rightPaddle.y + state.rightPaddle.dy),
+    bounds.top,
+    Math.min(bounds.bottom - state.rightPaddle.height, state.rightPaddle.y + state.rightPaddle.dy),
   );
+}
+
+function detectOuterSide(ballX: number, ballRadius: number, zoneLeft: number, zoneRight: number): Side | null {
+  if (ballX + ballRadius < zoneLeft) {
+    return 'left';
+  }
+  if (ballX - ballRadius > zoneRight) {
+    return 'right';
+  }
+  return null;
 }
 
 function stepGame(
@@ -181,20 +239,19 @@ function stepGame(
   h: number,
   keys: Keys,
   touch: TouchControls,
+  mouse: MouseControls,
 ): GameState {
   const s: GameState = {
     ...state,
     ball: { ...state.ball, pos: { ...state.ball.pos }, vel: { ...state.ball.vel } },
     leftPaddle: { ...state.leftPaddle },
     rightPaddle: { ...state.rightPaddle },
-    score: { ...state.score },
-    blocks: state.blocks.map(b => ({ ...b })),
-    ballHitBlockSinceServe: state.ballHitBlockSinceServe,
-    paddleHitCount: state.paddleHitCount,
+    blocks: state.blocks.map((block) => ({ ...block })),
   };
 
-  const paddleSpeed = h * PADDLE_SPEED_RATIO;
+  const bounds = getBounds(w, h);
   const grid = getGridDimensions(w, h);
+  const paddleSpeed = bounds.height * GAME_CONFIG.paddleSpeedRatio;
 
   if (s.phase === 'countdown') {
     s.phaseTimer += dt;
@@ -205,157 +262,138 @@ function stepGame(
         s.phase = 'playing';
       }
     }
-    updatePaddles(s, keys, touch, paddleSpeed, h);
-    return s;
-  }
-
-  if (s.phase === 'scored') {
-    s.phaseTimer += dt;
-    updatePaddles(s, keys, touch, paddleSpeed, h);
-    if (s.phaseTimer >= 1500) {
-      if (s.score.left >= WIN_SCORE || s.score.right >= WIN_SCORE) {
-        s.phase = 'gameover';
-        s.winner = s.score.left >= WIN_SCORE ? 'left' : 'right';
-      } else {
-        s.ball = makeBall(w, h, Math.random() < 0.5);
-        s.phase = 'countdown';
-        s.countdown = 3;
-        s.phaseTimer = 0;
-        s.ballHitBlockSinceServe = false;
-        s.paddleHitCount = 0;
-      }
-    }
+    updatePaddles(s, keys, touch, mouse, paddleSpeed, bounds);
     return s;
   }
 
   if (s.phase === 'gameover') {
+    updatePaddles(s, keys, touch, mouse, paddleSpeed, bounds);
     return s;
   }
 
-  // playing
-  updatePaddles(s, keys, touch, paddleSpeed, h);
+  updatePaddles(s, keys, touch, mouse, paddleSpeed, bounds);
 
   const frameFactor = dt / 16.67;
   const curSpeed = Math.hypot(s.ball.vel.x, s.ball.vel.y);
-  const newSpeed = curSpeed + BALL_SPEED_INCREMENT * Math.min(w, h) * frameFactor;
-  const speedRatio = newSpeed / curSpeed;
+  const newSpeed = curSpeed + GAME_CONFIG.ballSpeedIncrement * Math.min(bounds.width, bounds.height) * frameFactor;
+  const speedRatio = curSpeed === 0 ? 1 : newSpeed / curSpeed;
 
   s.ball.pos.x += s.ball.vel.x * frameFactor;
   s.ball.pos.y += s.ball.vel.y * frameFactor;
   s.ball.vel.x *= speedRatio;
   s.ball.vel.y *= speedRatio;
 
-  // Top/bottom bounce
-  if (s.ball.pos.y - s.ball.radius < 0) {
-    s.ball.pos.y = s.ball.radius;
+  if (s.ball.pos.y - s.ball.radius < bounds.top) {
+    s.ball.pos.y = bounds.top + s.ball.radius;
     s.ball.vel.y = Math.abs(s.ball.vel.y);
   }
-  if (s.ball.pos.y + s.ball.radius > h) {
-    s.ball.pos.y = h - s.ball.radius;
+  if (s.ball.pos.y + s.ball.radius > bounds.bottom) {
+    s.ball.pos.y = bounds.bottom - s.ball.radius;
     s.ball.vel.y = -Math.abs(s.ball.vel.y);
   }
 
-  let paddleHitLeft = false;
-  let paddleHitRight = false;
+  const leftPaddleX = bounds.left;
+  const rightPaddleX = bounds.right - GAME_CONFIG.paddleWidth;
 
-  // Left paddle hit
+  let paddleHit = false;
+
   if (
-    s.ball.vel.x < 0 &&
-    s.ball.pos.x - s.ball.radius <= PADDLE_WIDTH &&
-    s.ball.pos.y >= s.leftPaddle.y &&
-    s.ball.pos.y <= s.leftPaddle.y + s.leftPaddle.height
+    s.ball.vel.x < 0
+    && s.ball.pos.x - s.ball.radius <= leftPaddleX + GAME_CONFIG.paddleWidth
+    && s.ball.pos.x > leftPaddleX
+    && s.ball.pos.y >= s.leftPaddle.y
+    && s.ball.pos.y <= s.leftPaddle.y + s.leftPaddle.height
   ) {
-    paddleHitLeft = true;
-    s.ball.pos.x = PADDLE_WIDTH + s.ball.radius;
-    const relY =
-      (s.ball.pos.y - (s.leftPaddle.y + s.leftPaddle.height / 2)) /
-      (s.leftPaddle.height / 2);
+    paddleHit = true;
+    s.ball.pos.x = leftPaddleX + GAME_CONFIG.paddleWidth + s.ball.radius;
+    const relY = (s.ball.pos.y - (s.leftPaddle.y + s.leftPaddle.height / 2)) / (s.leftPaddle.height / 2);
     const angle = relY * (Math.PI / 3);
-    const spd = Math.hypot(s.ball.vel.x, s.ball.vel.y);
-    s.ball.vel.x = spd * Math.cos(angle);
-    s.ball.vel.y = spd * Math.sin(angle);
+    const speed = Math.hypot(s.ball.vel.x, s.ball.vel.y);
+    s.ball.vel.x = speed * Math.cos(angle);
+    s.ball.vel.y = speed * Math.sin(angle);
   }
 
-  // Right paddle hit
   if (
-    s.ball.vel.x > 0 &&
-    s.ball.pos.x + s.ball.radius >= w - PADDLE_WIDTH &&
-    s.ball.pos.y >= s.rightPaddle.y &&
-    s.ball.pos.y <= s.rightPaddle.y + s.rightPaddle.height
+    s.ball.vel.x > 0
+    && s.ball.pos.x + s.ball.radius >= rightPaddleX
+    && s.ball.pos.x < rightPaddleX + GAME_CONFIG.paddleWidth
+    && s.ball.pos.y >= s.rightPaddle.y
+    && s.ball.pos.y <= s.rightPaddle.y + s.rightPaddle.height
   ) {
-    paddleHitRight = true;
-    s.ball.pos.x = w - PADDLE_WIDTH - s.ball.radius;
-    const relY =
-      (s.ball.pos.y - (s.rightPaddle.y + s.rightPaddle.height / 2)) /
-      (s.rightPaddle.height / 2);
+    paddleHit = true;
+    s.ball.pos.x = rightPaddleX - s.ball.radius;
+    const relY = (s.ball.pos.y - (s.rightPaddle.y + s.rightPaddle.height / 2)) / (s.rightPaddle.height / 2);
     const angle = relY * (Math.PI / 3);
-    const spd = Math.hypot(s.ball.vel.x, s.ball.vel.y);
-    s.ball.vel.x = -spd * Math.cos(angle);
-    s.ball.vel.y = spd * Math.sin(angle);
+    const speed = Math.hypot(s.ball.vel.x, s.ball.vel.y);
+    s.ball.vel.x = -speed * Math.cos(angle);
+    s.ball.vel.y = speed * Math.sin(angle);
   }
 
-  // Handle paddle hit - spawn and fall blocks
-  if (paddleHitLeft || paddleHitRight) {
+  if (paddleHit) {
     s.paddleHitCount += 1;
-    
-    // Spawn a new block after first paddle hit
+
     if (s.paddleHitCount === 1) {
-      s.blocks.push(spawnTetrisBlock());
-    } else if (s.paddleHitCount > 1) {
-      // Fall blocks one row every paddle hit
+      const newBlock = spawnTetrisBlock(s.blocks);
+      if (newBlock) {
+        s.blocks.push(newBlock);
+      }
+    } else {
       s.blocks = updateBlocksFall(s.blocks);
-      
-      // Possibly spawn new blocks (not every hit, but periodically)
       if (s.paddleHitCount % 2 === 0) {
-        s.blocks.push(spawnTetrisBlock());
+        const newBlock = spawnTetrisBlock(s.blocks);
+        if (newBlock) {
+          s.blocks.push(newBlock);
+        }
       }
     }
   }
 
-  // Block collision detection and color matching
-  const blocksToRemove = new Set<number>();
-  s.blocks.forEach((block, idx) => {
+  const removed = new Set<number>();
+
+  s.blocks.forEach((block, index) => {
     const blockX = grid.zoneLeft + block.x * grid.blockWidth;
-    const blockY = block.y * grid.blockHeight;
-    
-    const blockCenterX = blockX + grid.blockWidth / 2;
-    const blockCenterY = blockY + grid.blockHeight / 2;
-    
-    const dx = s.ball.pos.x - blockCenterX;
-    const dy = s.ball.pos.y - blockCenterY;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    
-    if (dist < s.ball.radius + grid.blockWidth / 2) {
-      // Collision with block
-      const ballColorMatches = s.ball.color === BALL_COLOR_WHITE || s.ball.color === block.color;
-      
-      if (ballColorMatches) {
-        // Destroy block
-        blocksToRemove.add(idx);
-        // Change ball color to random different color
-        s.ball.color = getRandomDifferentColor(s.ball.color);
-      } else {
-        // Bounce ball
-        const angle = Math.atan2(dy, dx);
-        const spd = Math.hypot(s.ball.vel.x, s.ball.vel.y);
-        s.ball.vel.x = spd * Math.cos(angle);
-        s.ball.vel.y = spd * Math.sin(angle);
-      }
-      s.ballHitBlockSinceServe = true;
+    const blockY = bounds.top + block.y * grid.blockHeight;
+
+    const nearestX = Math.max(blockX, Math.min(s.ball.pos.x, blockX + grid.blockWidth));
+    const nearestY = Math.max(blockY, Math.min(s.ball.pos.y, blockY + grid.blockHeight));
+
+    const dx = s.ball.pos.x - nearestX;
+    const dy = s.ball.pos.y - nearestY;
+    const hit = dx * dx + dy * dy <= s.ball.radius * s.ball.radius;
+
+    if (!hit) {
+      return;
+    }
+
+    const match = s.ball.color === GAME_CONFIG.ballWhiteColor || s.ball.color === block.color;
+
+    if (match) {
+      removed.add(index);
+      s.ball.color = getRandomDifferentColor(s.ball.color);
+      return;
+    }
+
+    if (Math.abs(dx) > Math.abs(dy)) {
+      s.ball.vel.x = -s.ball.vel.x;
+    } else {
+      s.ball.vel.y = -s.ball.vel.y;
     }
   });
 
-  // Remove destroyed blocks
-  s.blocks = s.blocks.filter((_, idx) => !blocksToRemove.has(idx));
+  s.blocks = s.blocks.filter((_, index) => !removed.has(index));
 
-  // Score
-  if (s.ball.pos.x + s.ball.radius < 0) {
-    s.score.right += 1;
-    s.phase = 'scored';
-    s.phaseTimer = 0;
-  } else if (s.ball.pos.x - s.ball.radius > w) {
-    s.score.left += 1;
-    s.phase = 'scored';
+  const newOuterSide = detectOuterSide(s.ball.pos.x, s.ball.radius, grid.zoneLeft, grid.zoneRight);
+  if (newOuterSide !== null) {
+    if (s.lastOuterSide !== null && s.lastOuterSide !== newOuterSide) {
+      s.score += 1;
+    }
+    s.lastOuterSide = newOuterSide;
+  }
+
+  if (s.ball.pos.x + s.ball.radius < bounds.left || s.ball.pos.x - s.ball.radius > bounds.right) {
+    s.phase = 'gameover';
+    s.score = 0;
+    s.countdown = GAME_CONFIG.countdownSeconds;
     s.phaseTimer = 0;
   }
 
@@ -364,64 +402,59 @@ function stepGame(
 
 function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
   const { width: w, height: h } = ctx.canvas;
+  const bounds = getBounds(w, h);
+  const grid = getGridDimensions(w, h);
 
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, w, h);
 
-  // Center dashed line
-  ctx.save();
-  ctx.setLineDash([h / 30, h / 30]);
-  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.fillStyle = GAME_CONFIG.tetrisZoneHighlight;
+  ctx.fillRect(grid.zoneLeft, bounds.top, grid.zoneWidth, bounds.height);
+
+  ctx.strokeStyle = GAME_CONFIG.tetrisZoneStroke;
   ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(w / 2, 0);
-  ctx.lineTo(w / 2, h);
-  ctx.stroke();
-  ctx.restore();
+  ctx.strokeRect(grid.zoneLeft, bounds.top, grid.zoneWidth, bounds.height);
 
-  // Draw center zone boundaries (Tetris area)
-  const grid = getGridDimensions(w, h);
-  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(grid.zoneLeft, 0, grid.zoneWidth, h);
-
-  // Draw Tetris blocks
-  state.blocks.forEach(block => {
+  state.blocks.forEach((block) => {
     const blockX = grid.zoneLeft + block.x * grid.blockWidth;
-    const blockY = block.y * grid.blockHeight;
-    
+    const blockY = bounds.top + block.y * grid.blockHeight;
+
     ctx.fillStyle = block.color;
     ctx.fillRect(blockX + 1, blockY + 1, grid.blockWidth - 2, grid.blockHeight - 2);
-    
-    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
     ctx.lineWidth = 1;
     ctx.strokeRect(blockX + 1, blockY + 1, grid.blockWidth - 2, grid.blockHeight - 2);
   });
 
-  // Paddles
   ctx.fillStyle = '#fff';
-  ctx.fillRect(0, state.leftPaddle.y, PADDLE_WIDTH, state.leftPaddle.height);
-  ctx.fillRect(w - PADDLE_WIDTH, state.rightPaddle.y, PADDLE_WIDTH, state.rightPaddle.height);
+  const leftPaddleX = bounds.left;
+  const rightPaddleX = bounds.right - GAME_CONFIG.paddleWidth;
+  ctx.fillRect(leftPaddleX, state.leftPaddle.y, GAME_CONFIG.paddleWidth, state.leftPaddle.height);
+  ctx.fillRect(rightPaddleX, state.rightPaddle.y, GAME_CONFIG.paddleWidth, state.rightPaddle.height);
 
-  // Ball
   ctx.beginPath();
   ctx.arc(state.ball.pos.x, state.ball.pos.y, state.ball.radius, 0, Math.PI * 2);
   ctx.fillStyle = state.ball.color;
   ctx.fill();
 
-  // Scores
   const fontSize = Math.round(h * 0.1);
   ctx.font = `bold ${fontSize}px monospace`;
-  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  ctx.fillText(String(state.score.left), w * 0.25, h * 0.04);
-  ctx.fillText(String(state.score.right), w * 0.75, h * 0.04);
+  ctx.fillText(String(state.score), w / 2, bounds.top + 8);
+
+  const borderWidth = getBorderWidth();
+  ctx.strokeStyle = GAME_CONFIG.borderColor;
+  ctx.lineWidth = borderWidth;
+  ctx.strokeRect(borderWidth / 2, borderWidth / 2, w - borderWidth, h - borderWidth);
 
   if (state.phase === 'countdown') {
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    ctx.fillRect(0, 0, w, h);
-    const bigFont = Math.round(h * 0.25);
+    ctx.fillRect(bounds.left, bounds.top, bounds.width, bounds.height);
+
+    const bigFont = Math.round(h * 0.22);
     ctx.font = `bold ${bigFont}px monospace`;
     ctx.fillStyle = '#fff';
     ctx.textAlign = 'center';
@@ -430,35 +463,39 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
   }
 
   if (state.phase === 'gameover') {
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(bounds.left, bounds.top, bounds.width, bounds.height);
+
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = `bold ${Math.round(h * 0.1)}px monospace`;
     ctx.fillStyle = '#fff';
-    ctx.fillText(state.winner === 'left' ? 'LEFT WINS!' : 'RIGHT WINS!', w / 2, h * 0.38);
-    ctx.font = `${Math.round(h * 0.048)}px monospace`;
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.fillText(`${state.score.left} : ${state.score.right}`, w / 2, h * 0.53);
-    ctx.font = `${Math.round(h * 0.042)}px monospace`;
-    ctx.fillText('Tap or ENTER to restart', w / 2, h * 0.66);
+    ctx.fillText('GAME OVER', w / 2, h * 0.44);
+
+    ctx.font = `${Math.round(h * 0.045)}px monospace`;
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillText('Press ENTER or tap to restart', w / 2, h * 0.56);
   }
 
-  // Controls hint on first countdown
-  if (
-    state.phase === 'countdown' &&
-    state.score.left === 0 &&
-    state.score.right === 0
-  ) {
-    const hf = Math.round(h * 0.038);
-    ctx.font = `${hf}px monospace`;
-    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  if (state.phase === 'countdown' && state.paddleHitCount === 0) {
+    const hintFont = Math.round(h * 0.03);
+    ctx.font = `${hintFont}px monospace`;
+    ctx.fillStyle = GAME_CONFIG.controlsHintColor;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
-    ctx.fillText('Q ↑  A ↓', PADDLE_WIDTH + 8, h - 8);
+    ctx.fillText('Q/A - left paddle', bounds.left + GAME_CONFIG.paddleWidth + 12, bounds.bottom - 12);
     ctx.textAlign = 'right';
-    ctx.fillText("↑ ]  ↓ '", w - PADDLE_WIDTH - 8, h - 8);
+    ctx.fillText("]/' - right paddle | Hold LMB: sync", bounds.right - GAME_CONFIG.paddleWidth - 12, bounds.bottom - 12);
   }
+}
+
+function getCanvasDimensions(): { width: number; height: number; portrait: boolean } {
+  const portrait = window.innerHeight > window.innerWidth;
+  return {
+    width: Math.max(window.innerWidth, window.innerHeight),
+    height: Math.min(window.innerWidth, window.innerHeight),
+    portrait,
+  };
 }
 
 export default function PongGame() {
@@ -466,25 +503,34 @@ export default function PongGame() {
   const stateRef = useRef<GameState | null>(null);
   const keysRef = useRef<Keys>({ q: false, a: false, bracketRight: false, quote: false });
   const touchRef = useRef<TouchControls>({ left: null, right: null });
-  const activeTouchesRef = useRef<Map<number, 'left' | 'right'>>(new Map());
+  const mouseRef = useRef<MouseControls>({ active: false, y: null });
+  const activeTouchesRef = useRef<Map<number, Side>>(new Map());
   const rafRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
+  const [portraitMode, setPortraitMode] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (canvas === null) {
+      return;
+    }
+    const canvasEl: HTMLCanvasElement = canvas;
 
     const init = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-      stateRef.current = makeInitialState(canvas.width, canvas.height);
+      const dims = getCanvasDimensions();
+      canvasEl.width = dims.width;
+      canvasEl.height = dims.height;
+      setPortraitMode(dims.portrait);
+      stateRef.current = makeInitialState(canvasEl.width, canvasEl.height);
     };
 
     init();
 
     function loop(timestamp: number) {
-      const ctx = canvas!.getContext('2d');
-      if (!ctx || !stateRef.current) return;
+      const ctx = canvasEl.getContext('2d');
+      if (!ctx || !stateRef.current) {
+        return;
+      }
 
       const dt = Math.min(timestamp - lastTimeRef.current, 50);
       lastTimeRef.current = timestamp;
@@ -492,101 +538,200 @@ export default function PongGame() {
       stateRef.current = stepGame(
         stateRef.current,
         dt,
-        canvas!.width,
-        canvas!.height,
+        canvasEl.width,
+        canvasEl.height,
         keysRef.current,
         touchRef.current,
+        mouseRef.current,
       );
       renderGame(ctx, stateRef.current);
 
       rafRef.current = requestAnimationFrame(loop);
     }
 
+    const getGameY = (clientX: number, clientY: number): number => {
+      const rect = canvasEl.getBoundingClientRect();
+      if (!portraitMode) {
+        return clientY - rect.top;
+      }
+      const xInElement = clientX - rect.left;
+      return xInElement;
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
       switch (e.key) {
-        case 'q': case 'Q': keysRef.current.q = true; e.preventDefault(); break;
-        case 'a': case 'A': keysRef.current.a = true; e.preventDefault(); break;
-        case ']': keysRef.current.bracketRight = true; e.preventDefault(); break;
-        case "'": keysRef.current.quote = true; e.preventDefault(); break;
+        case 'q':
+        case 'Q':
+          keysRef.current.q = true;
+          e.preventDefault();
+          break;
+        case 'a':
+        case 'A':
+          keysRef.current.a = true;
+          e.preventDefault();
+          break;
+        case ']':
+          keysRef.current.bracketRight = true;
+          e.preventDefault();
+          break;
+        case "'":
+          keysRef.current.quote = true;
+          e.preventDefault();
+          break;
         case 'Enter':
           if (stateRef.current?.phase === 'gameover') {
-            stateRef.current = makeInitialState(canvas.width, canvas.height);
+            stateRef.current = makeInitialState(canvasEl.width, canvasEl.height);
           }
+          break;
+        default:
           break;
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
       switch (e.key) {
-        case 'q': case 'Q': keysRef.current.q = false; break;
-        case 'a': case 'A': keysRef.current.a = false; break;
-        case ']': keysRef.current.bracketRight = false; break;
-        case "'": keysRef.current.quote = false; break;
+        case 'q':
+        case 'Q':
+          keysRef.current.q = false;
+          break;
+        case 'a':
+        case 'A':
+          keysRef.current.a = false;
+          break;
+        case ']':
+          keysRef.current.bracketRight = false;
+          break;
+        case "'":
+          keysRef.current.quote = false;
+          break;
+        default:
+          break;
       }
+    };
+
+    const handleMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) {
+        return;
+      }
+
+      mouseRef.current.active = true;
+      mouseRef.current.y = getGameY(e.clientX, e.clientY);
+      e.preventDefault();
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!mouseRef.current.active) {
+        return;
+      }
+
+      mouseRef.current.y = getGameY(e.clientX, e.clientY);
+      e.preventDefault();
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (e.button !== 0) {
+        return;
+      }
+
+      mouseRef.current.active = false;
+      mouseRef.current.y = null;
     };
 
     const handleTouchStart = (e: TouchEvent) => {
       e.preventDefault();
       if (stateRef.current?.phase === 'gameover') {
-        stateRef.current = makeInitialState(canvas.width, canvas.height);
+        stateRef.current = makeInitialState(canvasEl.width, canvasEl.height);
         return;
       }
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        const t = e.changedTouches[i];
-        const side: 'left' | 'right' = t.clientX < canvas.width / 2 ? 'left' : 'right';
-        activeTouchesRef.current.set(t.identifier, side);
-        if (side === 'left') touchRef.current.left = t.clientY;
-        else touchRef.current.right = t.clientY;
+
+      for (let i = 0; i < e.changedTouches.length; i += 1) {
+        const touch = e.changedTouches[i];
+        const side: Side = touch.clientX < window.innerWidth / 2 ? 'left' : 'right';
+        activeTouchesRef.current.set(touch.identifier, side);
+
+        const y = getGameY(touch.clientX, touch.clientY);
+        if (side === 'left') {
+          touchRef.current.left = y;
+        } else {
+          touchRef.current.right = y;
+        }
       }
     };
 
     const handleTouchMove = (e: TouchEvent) => {
       e.preventDefault();
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        const t = e.changedTouches[i];
-        const side = activeTouchesRef.current.get(t.identifier);
-        if (side === 'left') touchRef.current.left = t.clientY;
-        else if (side === 'right') touchRef.current.right = t.clientY;
+      for (let i = 0; i < e.changedTouches.length; i += 1) {
+        const touch = e.changedTouches[i];
+        const side = activeTouchesRef.current.get(touch.identifier);
+        const y = getGameY(touch.clientX, touch.clientY);
+
+        if (side === 'left') {
+          touchRef.current.left = y;
+        } else if (side === 'right') {
+          touchRef.current.right = y;
+        }
       }
     };
 
     const handleTouchEnd = (e: TouchEvent) => {
       e.preventDefault();
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        const t = e.changedTouches[i];
-        const side = activeTouchesRef.current.get(t.identifier);
-        activeTouchesRef.current.delete(t.identifier);
-        const hasSide = Array.from(activeTouchesRef.current.values()).includes(
-          side as 'left' | 'right',
-        );
-        if (!hasSide) {
-          if (side === 'left') touchRef.current.left = null;
-          else if (side === 'right') touchRef.current.right = null;
+      for (let i = 0; i < e.changedTouches.length; i += 1) {
+        const touch = e.changedTouches[i];
+        const side = activeTouchesRef.current.get(touch.identifier);
+        activeTouchesRef.current.delete(touch.identifier);
+
+        const hasSideTouch = Array.from(activeTouchesRef.current.values()).includes(side as Side);
+        if (!hasSideTouch) {
+          if (side === 'left') {
+            touchRef.current.left = null;
+          }
+          if (side === 'right') {
+            touchRef.current.right = null;
+          }
         }
       }
     };
 
     const handleResize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-      if (!stateRef.current || stateRef.current.phase === 'gameover') {
-        init();
-      } else {
-        const s = stateRef.current;
-        const ph = canvas.height * PADDLE_HEIGHT_RATIO;
-        s.leftPaddle.height = ph;
-        s.rightPaddle.height = ph;
-        s.ball.radius = Math.min(canvas.width, canvas.height) * BALL_RADIUS_RATIO;
+      const dims = getCanvasDimensions();
+      const prevW = canvasEl.width;
+      const prevH = canvasEl.height;
+      canvasEl.width = dims.width;
+      canvasEl.height = dims.height;
+      setPortraitMode(dims.portrait);
+
+      if (!stateRef.current) {
+        stateRef.current = makeInitialState(canvasEl.width, canvasEl.height);
+        return;
       }
+
+      const s = stateRef.current;
+      const prevBounds = getBounds(prevW, prevH);
+      const nextBounds = getBounds(canvasEl.width, canvasEl.height);
+      const prevPaddleSpace = Math.max(1, prevBounds.height - s.leftPaddle.height);
+      const leftRatio = (s.leftPaddle.y - prevBounds.top) / prevPaddleSpace;
+      const rightRatio = (s.rightPaddle.y - prevBounds.top) / prevPaddleSpace;
+
+      s.leftPaddle.height = nextBounds.height * GAME_CONFIG.paddleHeightRatio;
+      s.rightPaddle.height = nextBounds.height * GAME_CONFIG.paddleHeightRatio;
+
+      s.leftPaddle.y = nextBounds.top + leftRatio * Math.max(0, nextBounds.height - s.leftPaddle.height);
+      s.rightPaddle.y = nextBounds.top + rightRatio * Math.max(0, nextBounds.height - s.rightPaddle.height);
+
+      s.ball.radius = Math.min(nextBounds.width, nextBounds.height) * GAME_CONFIG.ballRadiusRatio;
     };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
-    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
-    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
-    canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
-    canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+    window.addEventListener('mouseup', handleMouseUp);
     window.addEventListener('resize', handleResize);
+
+    canvasEl.addEventListener('mousedown', handleMouseDown);
+    canvasEl.addEventListener('mousemove', handleMouseMove);
+    canvasEl.addEventListener('touchstart', handleTouchStart, { passive: false });
+    canvasEl.addEventListener('touchmove', handleTouchMove, { passive: false });
+    canvasEl.addEventListener('touchend', handleTouchEnd, { passive: false });
+    canvasEl.addEventListener('touchcancel', handleTouchEnd, { passive: false });
 
     lastTimeRef.current = performance.now();
     rafRef.current = requestAnimationFrame(loop);
@@ -594,19 +739,35 @@ export default function PongGame() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
-      canvas.removeEventListener('touchstart', handleTouchStart);
-      canvas.removeEventListener('touchmove', handleTouchMove);
-      canvas.removeEventListener('touchend', handleTouchEnd);
-      canvas.removeEventListener('touchcancel', handleTouchEnd);
+      window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('resize', handleResize);
+
+      canvasEl.removeEventListener('mousedown', handleMouseDown);
+      canvasEl.removeEventListener('mousemove', handleMouseMove);
+      canvasEl.removeEventListener('touchstart', handleTouchStart);
+      canvasEl.removeEventListener('touchmove', handleTouchMove);
+      canvasEl.removeEventListener('touchend', handleTouchEnd);
+      canvasEl.removeEventListener('touchcancel', handleTouchEnd);
+
       cancelAnimationFrame(rafRef.current);
     };
-  }, []);
+  }, [portraitMode]);
 
   return (
     <canvas
       ref={canvasRef}
-      style={{ display: 'block', width: '100vw', height: '100vh', touchAction: 'none' }}
+      style={{
+        display: 'block',
+        touchAction: 'none',
+        position: 'fixed',
+        left: '50%',
+        top: '50%',
+        transform: portraitMode
+          ? 'translate(-50%, -50%) rotate(90deg)'
+          : 'translate(-50%, -50%)',
+        width: portraitMode ? '100vh' : '100vw',
+        height: portraitMode ? '100vw' : '100vh',
+      }}
     />
   );
 }

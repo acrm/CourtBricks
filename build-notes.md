@@ -4,3 +4,5 @@
 - 2026w10-0.2 — Align repository with AI agent workflow
 - 2026w10-0.3 — Update bootstrap prompt with immediate commit rule
 - 2026w10-1.1 — Implement hybrid Pong-Arkanoid-Tetris game with color-based block destruction
+- 2026w10-1.2 — Refactor gameplay config and single-player mode
+- 2026w10-2.1 — Implement forced landscape, single score, and new controls

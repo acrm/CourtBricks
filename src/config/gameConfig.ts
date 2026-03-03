@@ -1,10 +1,10 @@
 export const GAME_CONFIG = {
-  paddleWidth: 14,
+  paddleWidth: 30,
   paddleHeightRatio: 0.66,
   paddleSpeedRatio: 0.012,
 
   ballRadiusRatio: 0.018,
-  initialBallSpeedRatio: 0.0035,
+  initialBallSpeedRatio: 0.01,
   ballSpeedIncrement: 0,
 
   countdownSeconds: 3,

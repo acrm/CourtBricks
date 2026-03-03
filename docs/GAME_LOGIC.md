@@ -31,23 +31,27 @@
 
 ### Grid and Colors
 - Grid size: 10 columns × 20 rows.
+- Blocks are strictly square.
+- Square size is derived from playable field height (`height / 20`), and zone width is `10 * blockSize`.
 - Block palette has 5 colors and excludes white/black.
 
 ### Spawn and Fall
-- First block appears after the first paddle hit.
+- First tetromino appears after the first paddle hit.
 - On each paddle hit, blocks fall by one row where space is available.
-- Additional blocks continue spawning over time at the top row.
+- Additional standard tetrominoes (I, J, L, O, S, T, Z) continue spawning over time at the top.
+- All blocks inside one spawned tetromino have the same color.
 
 ### Ball-Block Interaction
 - White ball matches any block color.
 - Colored ball destroys only matching-color blocks.
-- On matching hit: block is removed, ball changes to a random different palette color.
+- On matching hit: only the collided block is removed, ball changes to a random different palette color.
 - On non-matching hit: block stays, ball bounces.
 
 ## Single-Player Scoring
 - One shared score is used for the player controlling both paddles.
 - Score +1 when the ball successfully crosses from one side of the center zone to the opposite side.
-- If the ball leaves the playfield through left or right border, game over is triggered and score resets to 0.
+- If the ball leaves the playfield through left or right border, game over is triggered.
+- Score is reset to 0 only when a new game starts (restart), so final game-over score remains visible.
 
 ## Phase Flow
 1. Countdown.

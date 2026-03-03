@@ -6,6 +6,16 @@ interface Ball { pos: Vec2; vel: Vec2; radius: number; color: string }
 interface Paddle { y: number; dy: number; height: number }
 interface Block { x: number; y: number; color: string }
 
+const TETROMINO_SHAPES: ReadonlyArray<ReadonlyArray<Vec2>> = [
+  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }],
+  [{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 2, y: 1 }],
+  [{ x: 2, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 2, y: 1 }],
+  [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }],
+  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 1 }],
+  [{ x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, { x: 2, y: 1 }],
+  [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }],
+];
+
 type Side = 'left' | 'right';
 type Phase = 'countdown' | 'playing' | 'gameover';
 
@@ -108,6 +118,7 @@ function makeInitialState(w: number, h: number): GameState {
 }
 
 function getGridDimensions(w: number, h: number): {
+  blockSize: number;
   blockWidth: number;
   blockHeight: number;
   zoneLeft: number;
@@ -115,27 +126,54 @@ function getGridDimensions(w: number, h: number): {
   zoneWidth: number;
 } {
   const bounds = getBounds(w, h);
-  const zoneLeft = bounds.left + bounds.width * GAME_CONFIG.centerZoneStartRatio;
-  const zoneRight = bounds.left + bounds.width * GAME_CONFIG.centerZoneEndRatio;
-  const zoneWidth = zoneRight - zoneLeft;
-  const blockWidth = zoneWidth / GAME_CONFIG.tetrisGridCols;
-  const blockHeight = bounds.height / GAME_CONFIG.tetrisGridRows;
+  const blockSize = bounds.height / GAME_CONFIG.tetrisGridRows;
+  const zoneWidth = blockSize * GAME_CONFIG.tetrisGridCols;
+  const zoneLeft = bounds.left + (bounds.width - zoneWidth) / 2;
+  const zoneRight = zoneLeft + zoneWidth;
+  const blockWidth = blockSize;
+  const blockHeight = blockSize;
 
-  return { blockWidth, blockHeight, zoneLeft, zoneRight, zoneWidth };
+  return { blockSize, blockWidth, blockHeight, zoneLeft, zoneRight, zoneWidth };
 }
 
-function spawnTetrisBlock(blocks: Block[]): Block | null {
-  const col = Math.floor(Math.random() * GAME_CONFIG.tetrisGridCols);
-  const canSpawn = !blocks.some((block) => block.x === col && block.y === 0);
-  if (!canSpawn) {
-    return null;
+function spawnTetromino(blocks: Block[]): Block[] {
+  const shape = TETROMINO_SHAPES[Math.floor(Math.random() * TETROMINO_SHAPES.length)];
+  const color = getRandomBlockColor();
+
+  const minX = Math.min(...shape.map((cell) => cell.x));
+  const maxX = Math.max(...shape.map((cell) => cell.x));
+  const spawnMinX = -minX;
+  const spawnMaxX = GAME_CONFIG.tetrisGridCols - 1 - maxX;
+
+  if (spawnMaxX < spawnMinX) {
+    return [];
   }
 
-  return {
-    x: col,
-    y: 0,
-    color: getRandomBlockColor(),
-  };
+  const startX = spawnMinX + Math.floor(Math.random() * (spawnMaxX - spawnMinX + 1));
+  const candidates: number[] = [];
+  for (let i = spawnMinX; i <= spawnMaxX; i += 1) {
+    candidates.push(i);
+  }
+
+  const ordered = [
+    ...candidates.filter((x) => x >= startX),
+    ...candidates.filter((x) => x < startX),
+  ];
+
+  for (const offsetX of ordered) {
+    const cells = shape.map((cell) => ({ x: cell.x + offsetX, y: cell.y }));
+    const canPlace = cells.every(
+      (cell) => !blocks.some((block) => block.x === cell.x && block.y === cell.y),
+    );
+
+    if (!canPlace) {
+      continue;
+    }
+
+    return cells.map((cell) => ({ ...cell, color }));
+  }
+
+  return [];
 }
 
 function updateBlocksFall(blocks: Block[]): Block[] {
@@ -333,16 +371,16 @@ function stepGame(
     s.paddleHitCount += 1;
 
     if (s.paddleHitCount === 1) {
-      const newBlock = spawnTetrisBlock(s.blocks);
-      if (newBlock) {
-        s.blocks.push(newBlock);
+      const newBlocks = spawnTetromino(s.blocks);
+      if (newBlocks.length > 0) {
+        s.blocks.push(...newBlocks);
       }
     } else {
       s.blocks = updateBlocksFall(s.blocks);
       if (s.paddleHitCount % 2 === 0) {
-        const newBlock = spawnTetrisBlock(s.blocks);
-        if (newBlock) {
-          s.blocks.push(newBlock);
+        const newBlocks = spawnTetromino(s.blocks);
+        if (newBlocks.length > 0) {
+          s.blocks.push(...newBlocks);
         }
       }
     }
@@ -392,7 +430,6 @@ function stepGame(
 
   if (s.ball.pos.x + s.ball.radius < bounds.left || s.ball.pos.x - s.ball.radius > bounds.right) {
     s.phase = 'gameover';
-    s.score = 0;
     s.countdown = GAME_CONFIG.countdownSeconds;
     s.phaseTimer = 0;
   }

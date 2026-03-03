@@ -8,10 +8,19 @@ const INITIAL_BALL_SPEED_RATIO = 0.007;
 const BALL_SPEED_INCREMENT = 0.0003;
 const WIN_SCORE = 7;
 
+// Tetris zone constants
+const TETRIS_GRID_COLS = 10;
+const TETRIS_GRID_ROWS = 20;
+const TETRIS_BLOCK_COLORS = ['#FF1744', '#F57C00', '#FBC02D', '#388E3C', '#0277BD']; // Red, Orange, Yellow, Green, Blue
+const BALL_COLOR_WHITE = '#FFFFFF';
+const CENTER_ZONE_START_RATIO = 0.3;
+const CENTER_ZONE_END_RATIO = 0.7;
+
 interface Vec2 { x: number; y: number }
-interface Ball { pos: Vec2; vel: Vec2; radius: number }
+interface Ball { pos: Vec2; vel: Vec2; radius: number; color: string }
 interface Paddle { y: number; dy: number; height: number }
 interface Score { left: number; right: number }
+interface Block { x: number; y: number; color: string }
 type Phase = 'countdown' | 'playing' | 'scored' | 'gameover';
 
 interface GameState {
@@ -23,6 +32,9 @@ interface GameState {
   winner: 'left' | 'right' | null;
   countdown: number;
   phaseTimer: number;
+  blocks: Block[];
+  ballHitBlockSinceServe: boolean;
+  paddleHitCount: number;
 }
 
 interface Keys {
@@ -37,6 +49,15 @@ interface TouchControls {
   right: number | null;
 }
 
+function getRandomBlockColor(): string {
+  return TETRIS_BLOCK_COLORS[Math.floor(Math.random() * TETRIS_BLOCK_COLORS.length)];
+}
+
+function getRandomDifferentColor(currentColor: string): string {
+  const available = TETRIS_BLOCK_COLORS.filter(c => c !== currentColor);
+  return available[Math.floor(Math.random() * available.length)];
+}
+
 function makeBall(w: number, h: number, towardsLeft?: boolean): Ball {
   const radius = Math.min(w, h) * BALL_RADIUS_RATIO;
   const speed = Math.min(w, h) * INITIAL_BALL_SPEED_RATIO;
@@ -46,6 +67,7 @@ function makeBall(w: number, h: number, towardsLeft?: boolean): Ball {
     pos: { x: w / 2, y: h / 2 },
     vel: { x: dir * speed * Math.cos(angle), y: speed * Math.sin(angle) },
     radius,
+    color: BALL_COLOR_WHITE,
   };
 }
 
@@ -60,8 +82,54 @@ function makeInitialState(w: number, h: number): GameState {
     winner: null,
     countdown: 3,
     phaseTimer: 0,
+    blocks: [],
+    ballHitBlockSinceServe: false,
+    paddleHitCount: 0,
   };
 }
+
+function getGridDimensions(w: number, h: number): { blockWidth: number; blockHeight: number; zoneLeft: number; zoneRight: number; zoneWidth: number } {
+  const zoneLeft = w * CENTER_ZONE_START_RATIO;
+  const zoneRight = w * CENTER_ZONE_END_RATIO;
+  const zoneWidth = zoneRight - zoneLeft;
+  const blockWidth = zoneWidth / TETRIS_GRID_COLS;
+  const blockHeight = h / TETRIS_GRID_ROWS;
+  return { blockWidth, blockHeight, zoneLeft, zoneRight, zoneWidth };
+}
+
+function spawnTetrisBlock(): Block {
+  const col = Math.floor(Math.random() * TETRIS_GRID_COLS);
+  return {
+    x: Math.floor(col),
+    y: 0,
+    color: getRandomBlockColor(),
+  };
+}
+
+function getBlocksToFall(blocks: Block[]): Block[] {
+  const grouped = new Map<number, Block[]>();
+  blocks.forEach(b => {
+    if (!grouped.has(b.x)) grouped.set(b.x, []);
+    grouped.get(b.x)!.push(b);
+  });
+  
+  return Array.from(grouped.values()).map(col => col[col.length - 1]);
+}
+
+function updateBlocksFall(blocks: Block[]): Block[] {
+  const falling = getBlocksToFall(blocks);
+  const newBlocks = blocks.map(b => ({ ...b }));
+  
+  falling.forEach(block => {
+    const idx = newBlocks.findIndex(b => b === block);
+    if (idx !== -1 && newBlocks[idx].y < TETRIS_GRID_ROWS - 1) {
+      newBlocks[idx].y += 1;
+    }
+  });
+  
+  return newBlocks;
+}
+
 
 function updatePaddles(
   state: GameState,
@@ -120,9 +188,13 @@ function stepGame(
     leftPaddle: { ...state.leftPaddle },
     rightPaddle: { ...state.rightPaddle },
     score: { ...state.score },
+    blocks: state.blocks.map(b => ({ ...b })),
+    ballHitBlockSinceServe: state.ballHitBlockSinceServe,
+    paddleHitCount: state.paddleHitCount,
   };
 
   const paddleSpeed = h * PADDLE_SPEED_RATIO;
+  const grid = getGridDimensions(w, h);
 
   if (s.phase === 'countdown') {
     s.phaseTimer += dt;
@@ -149,6 +221,8 @@ function stepGame(
         s.phase = 'countdown';
         s.countdown = 3;
         s.phaseTimer = 0;
+        s.ballHitBlockSinceServe = false;
+        s.paddleHitCount = 0;
       }
     }
     return s;
@@ -181,6 +255,9 @@ function stepGame(
     s.ball.vel.y = -Math.abs(s.ball.vel.y);
   }
 
+  let paddleHitLeft = false;
+  let paddleHitRight = false;
+
   // Left paddle hit
   if (
     s.ball.vel.x < 0 &&
@@ -188,6 +265,7 @@ function stepGame(
     s.ball.pos.y >= s.leftPaddle.y &&
     s.ball.pos.y <= s.leftPaddle.y + s.leftPaddle.height
   ) {
+    paddleHitLeft = true;
     s.ball.pos.x = PADDLE_WIDTH + s.ball.radius;
     const relY =
       (s.ball.pos.y - (s.leftPaddle.y + s.leftPaddle.height / 2)) /
@@ -205,6 +283,7 @@ function stepGame(
     s.ball.pos.y >= s.rightPaddle.y &&
     s.ball.pos.y <= s.rightPaddle.y + s.rightPaddle.height
   ) {
+    paddleHitRight = true;
     s.ball.pos.x = w - PADDLE_WIDTH - s.ball.radius;
     const relY =
       (s.ball.pos.y - (s.rightPaddle.y + s.rightPaddle.height / 2)) /
@@ -214,6 +293,60 @@ function stepGame(
     s.ball.vel.x = -spd * Math.cos(angle);
     s.ball.vel.y = spd * Math.sin(angle);
   }
+
+  // Handle paddle hit - spawn and fall blocks
+  if (paddleHitLeft || paddleHitRight) {
+    s.paddleHitCount += 1;
+    
+    // Spawn a new block after first paddle hit
+    if (s.paddleHitCount === 1) {
+      s.blocks.push(spawnTetrisBlock());
+    } else if (s.paddleHitCount > 1) {
+      // Fall blocks one row every paddle hit
+      s.blocks = updateBlocksFall(s.blocks);
+      
+      // Possibly spawn new blocks (not every hit, but periodically)
+      if (s.paddleHitCount % 2 === 0) {
+        s.blocks.push(spawnTetrisBlock());
+      }
+    }
+  }
+
+  // Block collision detection and color matching
+  const blocksToRemove = new Set<number>();
+  s.blocks.forEach((block, idx) => {
+    const blockX = grid.zoneLeft + block.x * grid.blockWidth;
+    const blockY = block.y * grid.blockHeight;
+    
+    const blockCenterX = blockX + grid.blockWidth / 2;
+    const blockCenterY = blockY + grid.blockHeight / 2;
+    
+    const dx = s.ball.pos.x - blockCenterX;
+    const dy = s.ball.pos.y - blockCenterY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist < s.ball.radius + grid.blockWidth / 2) {
+      // Collision with block
+      const ballColorMatches = s.ball.color === BALL_COLOR_WHITE || s.ball.color === block.color;
+      
+      if (ballColorMatches) {
+        // Destroy block
+        blocksToRemove.add(idx);
+        // Change ball color to random different color
+        s.ball.color = getRandomDifferentColor(s.ball.color);
+      } else {
+        // Bounce ball
+        const angle = Math.atan2(dy, dx);
+        const spd = Math.hypot(s.ball.vel.x, s.ball.vel.y);
+        s.ball.vel.x = spd * Math.cos(angle);
+        s.ball.vel.y = spd * Math.sin(angle);
+      }
+      s.ballHitBlockSinceServe = true;
+    }
+  });
+
+  // Remove destroyed blocks
+  s.blocks = s.blocks.filter((_, idx) => !blocksToRemove.has(idx));
 
   // Score
   if (s.ball.pos.x + s.ball.radius < 0) {
@@ -246,6 +379,25 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
   ctx.stroke();
   ctx.restore();
 
+  // Draw center zone boundaries (Tetris area)
+  const grid = getGridDimensions(w, h);
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(grid.zoneLeft, 0, grid.zoneWidth, h);
+
+  // Draw Tetris blocks
+  state.blocks.forEach(block => {
+    const blockX = grid.zoneLeft + block.x * grid.blockWidth;
+    const blockY = block.y * grid.blockHeight;
+    
+    ctx.fillStyle = block.color;
+    ctx.fillRect(blockX + 1, blockY + 1, grid.blockWidth - 2, grid.blockHeight - 2);
+    
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(blockX + 1, blockY + 1, grid.blockWidth - 2, grid.blockHeight - 2);
+  });
+
   // Paddles
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, state.leftPaddle.y, PADDLE_WIDTH, state.leftPaddle.height);
@@ -254,7 +406,7 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
   // Ball
   ctx.beginPath();
   ctx.arc(state.ball.pos.x, state.ball.pos.y, state.ball.radius, 0, Math.PI * 2);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = state.ball.color;
   ctx.fill();
 
   // Scores

@@ -1867,12 +1867,12 @@ export default function PongGame() {
 
     // Load bonus icons
     const bonusIconSources: Record<BonusIconKey, string> = {
-      red: 'img/red_bonus.png',
-      blue: 'img/blue_bonus.png',
-      green: 'img/green_bonus.png',
-      yellow: 'img/yellow_bonus.png',
-      orange: 'img/orange_bonus.png',
-      white: 'img/white_bonus.png',
+      red: 'img/red_bonus_256.png',
+      blue: 'img/blue_bonus_256.png',
+      green: 'img/green_bonus_256.png',
+      yellow: 'img/yellow_bonus_256.png',
+      orange: 'img/orange_bonus_256.png',
+      white: 'img/white_bonus_256.png',
     };
 
     (Object.entries(bonusIconSources) as Array<[BonusIconKey, string]>).forEach(([key, src]) => {

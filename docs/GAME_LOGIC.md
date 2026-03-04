@@ -22,13 +22,15 @@
 ## Controls
 - Left paddle: `Q` up, `A` down.
 - Right paddle: `]` up, `'` down.
-- Touch: left/right half of the screen controls the corresponding paddle.
+- Touch: tap directly on a paddle (with +50% height tolerance) to control it.
 - Touch controls are properly inverted for real mobile devices in portrait orientation.
+- UI buttons: tap music, sounds, settings, or finish buttons in top panel.
 - Debug bonus purchase: `Space` buys currently visible bonus offer.
 - Debug mouse mode: hold left mouse button and move mouse vertically to move both paddles synchronously.
 
 ## Paddle & Ball Rules
 - Paddle height is controlled by `paddleHeightRatio` from config.
+- Left paddle is magenta (`#FF00FF`), right paddle is cyan (`#00FFFF`).
 - Ball speed is controlled by `initialBallSpeedRatio` from config.
 - Ball starts white and keeps constant speed (no acceleration).
 - Ball bounces off top and bottom playfield borders.
@@ -64,12 +66,13 @@
 
 ## Bonus Shop
 - A bonus widget may appear no more often than once per 10 seconds.
-- The widget always stays on the side opposite to the current ball side and jumps instantly when the ball crosses.
-- Offer lifetime is 5 seconds.
+- The widget always 10 seconds with a countdown ring.
 - Widget is square with size `33%` of screen height and centered vertically in its side zone.
 - The widget is shown only if the ball stays in one side zone for at least 3 seconds.
 - The widget is shown only when current score is enough to buy the current offer.
 - A one-tap purchase is supported on touch devices.
+- The widget displays icon, price (points), effect duration, and a decreasing ring timer.
+- Bonus offers never propose the same color the ball currently has
 - The widget displays icon, price (points), effect duration, and a decreasing ring timer.
 
 ### Current Assortment
@@ -88,10 +91,38 @@
 - Score +1 when the ball successfully crosses from one side of the center zone to the opposite side.
 - Score gain is animated as green `+1`.
 - Score spending in bonus shop is animated as red `-N`.
-- If the ball leaves the playfield through left or right border, game over is triggered.
-- Score is reset to 0 only when a new game starts (restart), so final game-over score remains visible.
+- Total score accumulates across game sessions when using the Finish feature.
+- Finish button saves current session score and displays total accumulated score across all sessions.
+
+## UI Elements
+- Top panel background is gold (`#FFD700`).
+- Top panel contains:
+  - Left sid (3 seconds with audio ticks).
+2. Active play with paddles, blocks, scoring, and bonuses.
+3. Game over on ball miss (automatic).
+4. Finished state (manual via Finish button) showing session and total scores.
+5. Restart on `Enter` or tap to begin new sessionighted and available only during active gameplay.
+
+## Audio System
+- Background music plays continuously, cycling through available tracks in `public/audio`.
+- Music tracks: `cartoonish.mp3`, `russian.mp3`.
+- Sound effects play on game events:
+  - Paddle hit: `mixkit-golf-ball-hit-2105.wav`
+  - Wall hit: `mixkit-hitting-golf-ball-2080.wav`
+  - Block hit (non-matching): `mixkit-hitting-golf-ball-2080.wav`
+  - Block destroy (matching): `mixkit-arcade-score-interface-217.wav`
+  - Score gain: `mixkit-arcade-score-interface-217.wav`
+  - Countdown tick: `mixkit-arcade-player-select-2036.wav`
+  - Game over: `mixkit-arcade-retro-game-over-213.wav`
+  - Bonus appear: `mixkit-arcade-bonus-alert-767.wav`
+  - Bonus expire: `mixkit-quick-lock-sound-2854.wav`
+  - Bonus purchase: `mixkit-magic-sweep-game-trophy-257.wav`
+- Music and sounds can be toggled independently via UI buttons.
 
 ## Audio Assets
+- Game audio assets should be placed in `public/audio`.
+- Music files: MP3 format.
+- Sound effects: WAV format for low latency
 - Game audio assets should be placed in `public/audio`.
 
 ## Phase Flow

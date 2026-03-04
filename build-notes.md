@@ -16,3 +16,4 @@
 - 2026w10-7.1 — Center bonus widget in gameplay side zone
 - 2026w10-7.2 — Gate bonus display and add score delta animations
 - 2026w10-8.1 — Add bonus visibility rules, Space purchase, and audio assets folder
+- 2026w10-9.1 — Add audio system, UI buttons, finish feature, paddle colors, improved touch controls, and bonus logic fixes

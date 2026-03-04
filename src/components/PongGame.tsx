@@ -6,6 +6,14 @@ interface Ball { pos: Vec2; vel: Vec2; radius: number; color: string }
 interface Paddle { y: number; dy: number; height: number }
 interface Block { x: number; y: number; color: string; pieceId: number }
 interface ActiveTetromino { id: number; blocks: Block[]; paddleHitsSinceLastFall: number }
+interface ScoreDeltaFx {
+  id: number;
+  delta: number;
+  text: string;
+  color: string;
+  startedAt: number;
+  durationMs: number;
+}
 
 const TETROMINO_SHAPES: ReadonlyArray<ReadonlyArray<Vec2>> = [
   [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }],
@@ -47,6 +55,10 @@ interface GameState {
   nextPieceId: number;
   bonusOffer: BonusOffer | null;
   lastBonusSpawnAt: number;
+  currentBallSide: Side;
+  ballSideEnteredAt: number;
+  scoreFx: ScoreDeltaFx[];
+  nextScoreFxId: number;
 }
 
 interface Keys {
@@ -121,9 +133,13 @@ function makeInitialState(w: number, h: number): GameState {
   const bounds = getBounds(w, h);
   const paddleHeight = bounds.height * GAME_CONFIG.paddleHeightRatio;
   const centerPaddleY = bounds.top + bounds.height / 2 - paddleHeight / 2;
+  const ball = makeBall(w, h);
+  const grid = getGridDimensions(w, h);
+  const now = performance.now();
+  const currentBallSide = getBallSide(ball.pos.x, grid.zoneLeft, grid.zoneRight);
 
   return {
-    ball: makeBall(w, h),
+    ball,
     leftPaddle: { y: centerPaddleY, dy: 0, height: paddleHeight },
     rightPaddle: { y: centerPaddleY, dy: 0, height: paddleHeight },
     phase: 'countdown',
@@ -138,6 +154,10 @@ function makeInitialState(w: number, h: number): GameState {
     nextPieceId: 1,
     bonusOffer: null,
     lastBonusSpawnAt: 0,
+    currentBallSide,
+    ballSideEnteredAt: now,
+    scoreFx: [],
+    nextScoreFxId: 1,
   };
 }
 
@@ -279,6 +299,46 @@ function getRandomBonusOffer(side: Side, now: number): BonusOffer {
   return options[Math.floor(Math.random() * options.length)];
 }
 
+function canShowBonusOffer(state: GameState, now: number): boolean {
+  if (state.phase !== 'playing' || state.bonusOffer === null) {
+    return false;
+  }
+
+  if (state.score < state.bonusOffer.cost) {
+    return false;
+  }
+
+  return now - state.ballSideEnteredAt >= GAME_CONFIG.bonusRequiredZoneStayMs;
+}
+
+function pushScoreFx(state: GameState, delta: number, now: number): void {
+  const color = delta >= 0 ? 'rgb(80, 235, 120)' : 'rgb(255, 95, 95)';
+  const text = delta >= 0 ? `+${delta}` : `${delta}`;
+
+  state.scoreFx.push({
+    id: state.nextScoreFxId,
+    delta,
+    text,
+    color,
+    startedAt: now,
+    durationMs: GAME_CONFIG.scoreFxDurationMs,
+  });
+  state.nextScoreFxId += 1;
+}
+
+function tryPurchaseBonus(state: GameState, now: number): boolean {
+  if (!canShowBonusOffer(state, now) || state.bonusOffer === null) {
+    return false;
+  }
+
+  state.score -= state.bonusOffer.cost;
+  pushScoreFx(state, -state.bonusOffer.cost, now);
+  state.ball.color = state.bonusOffer.color;
+  state.bonusOffer = null;
+  state.lastBonusSpawnAt = now;
+  return true;
+}
+
 function getBonusWidgetRect(
   bounds: Bounds,
   grid: { zoneLeft: number; zoneRight: number },
@@ -406,7 +466,10 @@ function stepGame(
       }
       : null,
     ballTrail: [...state.ballTrail],
+    scoreFx: state.scoreFx.map((fx) => ({ ...fx })),
   };
+
+  s.scoreFx = s.scoreFx.filter((fx) => now - fx.startedAt <= fx.durationMs);
 
   const bounds = getBounds(w, h);
   const grid = getGridDimensions(w, h);
@@ -531,6 +594,10 @@ function stepGame(
 
   // Bonus offer lifecycle (spawn not more than once in 10s, always opposite to ball side)
   const ballSide = getBallSide(s.ball.pos.x, grid.zoneLeft, grid.zoneRight);
+  if (ballSide !== s.currentBallSide) {
+    s.currentBallSide = ballSide;
+    s.ballSideEnteredAt = now;
+  }
   const bonusSide: Side = ballSide === 'left' ? 'right' : 'left';
 
   if (s.bonusOffer) {
@@ -626,6 +693,7 @@ function stepGame(
   if (newOuterSide !== null) {
     if (s.lastOuterSide !== null && s.lastOuterSide !== newOuterSide) {
       s.score += 1;
+      pushScoreFx(s, 1, now);
     }
     s.lastOuterSide = newOuterSide;
   }
@@ -663,6 +731,27 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillText(`SCORE: ${state.score}`, 20, bounds.topPanelHeight / 2);
+
+  // Score change animation (+/-)
+  state.scoreFx.forEach((fx) => {
+    const age = now - fx.startedAt;
+    if (age < 0 || age > fx.durationMs) {
+      return;
+    }
+
+    const t = age / fx.durationMs;
+    const alpha = 1 - t;
+    const y = bounds.topPanelHeight / 2 - t * Math.max(14, bounds.topPanelHeight * 0.35);
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = `bold ${Math.round(scoreFontSize * 0.6)}px monospace`;
+    ctx.fillStyle = fx.color;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(fx.text, 20 + Math.round(scoreFontSize * 3.4), y);
+    ctx.restore();
+  });
 
   // Settings button in top panel (right side)
   const buttonWidth = 100;
@@ -755,7 +844,7 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
   ctx.fillStyle = state.ball.color;
   ctx.fill();
 
-  if (state.bonusOffer && state.phase === 'playing') {
+  if (canShowBonusOffer(state, now) && state.bonusOffer) {
     const widget = getBonusWidgetRect(bounds, { zoneLeft: grid.zoneLeft, zoneRight: grid.zoneRight }, state.bonusOffer.side, h);
     const remaining = Math.max(0, state.bonusOffer.expiresAt - now);
     const ratio = remaining / GAME_CONFIG.bonusOfferLifetimeMs;
@@ -946,6 +1035,13 @@ export default function PongGame() {
             stateRef.current = makeInitialState(canvasEl.width, canvasEl.height);
           }
           break;
+        case ' ':
+        case 'Spacebar':
+          if (stateRef.current) {
+            tryPurchaseBonus(stateRef.current, performance.now());
+          }
+          e.preventDefault();
+          break;
         default:
           break;
       }
@@ -1012,7 +1108,7 @@ export default function PongGame() {
         const state = stateRef.current;
         const point = getGamePoint(touch.clientX, touch.clientY);
 
-        if (state?.phase === 'playing' && state.bonusOffer) {
+        if (state && canShowBonusOffer(state, performance.now()) && state.bonusOffer) {
           const bounds = getBounds(canvasEl.width, canvasEl.height);
           const grid = getGridDimensions(canvasEl.width, canvasEl.height);
           const rect = getBonusWidgetRect(
@@ -1027,12 +1123,7 @@ export default function PongGame() {
             && point.y <= rect.y + rect.size;
 
           if (insideWidget) {
-            if (state.score >= state.bonusOffer.cost) {
-              state.score -= state.bonusOffer.cost;
-              state.ball.color = state.bonusOffer.color;
-              state.bonusOffer = null;
-              state.lastBonusSpawnAt = performance.now();
-            }
+            tryPurchaseBonus(state, performance.now());
             continue;
           }
         }

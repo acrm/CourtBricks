@@ -24,6 +24,7 @@
 - Right paddle: `]` up, `'` down.
 - Touch: left/right half of the screen controls the corresponding paddle.
 - Touch controls are properly inverted for real mobile devices in portrait orientation.
+- Debug bonus purchase: `Space` buys currently visible bonus offer.
 - Debug mouse mode: hold left mouse button and move mouse vertically to move both paddles synchronously.
 
 ## Paddle & Ball Rules
@@ -66,6 +67,8 @@
 - The widget always stays on the side opposite to the current ball side and jumps instantly when the ball crosses.
 - Offer lifetime is 5 seconds.
 - Widget is square with size `33%` of screen height and centered vertically in its side zone.
+- The widget is shown only if the ball stays in one side zone for at least 3 seconds.
+- The widget is shown only when current score is enough to buy the current offer.
 - A one-tap purchase is supported on touch devices.
 - The widget displays icon, price (points), effect duration, and a decreasing ring timer.
 
@@ -83,8 +86,13 @@
 ## Single-Player Scoring
 - One shared score is used for the player controlling both paddles.
 - Score +1 when the ball successfully crosses from one side of the center zone to the opposite side.
+- Score gain is animated as green `+1`.
+- Score spending in bonus shop is animated as red `-N`.
 - If the ball leaves the playfield through left or right border, game over is triggered.
 - Score is reset to 0 only when a new game starts (restart), so final game-over score remains visible.
+
+## Audio Assets
+- Game audio assets should be placed in `public/audio`.
 
 ## Phase Flow
 1. Countdown.

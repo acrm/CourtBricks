@@ -40,9 +40,12 @@ export const GAME_CONFIG = {
   // Bonus shop configuration
   bonusOfferIntervalMs: 10000,
   bonusOfferLifetimeMs: 5000,
+  bonusRequiredZoneStayMs: 3000,
   bonusWidgetSizeRatio: 0.33,
   bonusColorCost: 3,
   bonusWhiteCost: 5,
+
+  scoreFxDurationMs: 850,
 };
 
 export type GameConfig = typeof GAME_CONFIG;

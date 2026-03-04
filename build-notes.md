@@ -14,3 +14,5 @@
 - 2026w10-6.1 — Implement bonus widget and improved block physics
 - 2026w10-6.2 — Fix bonus widget side-zone centering
 - 2026w10-7.1 — Center bonus widget in gameplay side zone
+- 2026w10-7.2 — Gate bonus display and add score delta animations
+- 2026w10-8.1 — Add bonus visibility rules, Space purchase, and audio assets folder

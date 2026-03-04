@@ -279,7 +279,12 @@ function getRandomBonusOffer(side: Side, now: number): BonusOffer {
   return options[Math.floor(Math.random() * options.length)];
 }
 
-function getBonusWidgetRect(bounds: Bounds, offerSide: Side, canvasWidth: number, canvasHeight: number): {
+function getBonusWidgetRect(
+  bounds: Bounds,
+  grid: { zoneLeft: number; zoneRight: number },
+  offerSide: Side,
+  canvasHeight: number,
+): {
   x: number;
   y: number;
   size: number;
@@ -287,8 +292,8 @@ function getBonusWidgetRect(bounds: Bounds, offerSide: Side, canvasWidth: number
   const size = canvasHeight * GAME_CONFIG.bonusWidgetSizeRatio;
   const y = bounds.top + (bounds.height - size) / 2;
   const sideCenterX = offerSide === 'left'
-    ? bounds.left / 2
-    : bounds.right + (canvasWidth - bounds.right) / 2;
+    ? (bounds.left + grid.zoneLeft) / 2
+    : (grid.zoneRight + bounds.right) / 2;
 
   return {
     x: sideCenterX - size / 2,
@@ -751,7 +756,7 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
   ctx.fill();
 
   if (state.bonusOffer && state.phase === 'playing') {
-    const widget = getBonusWidgetRect(bounds, state.bonusOffer.side, w, h);
+    const widget = getBonusWidgetRect(bounds, { zoneLeft: grid.zoneLeft, zoneRight: grid.zoneRight }, state.bonusOffer.side, h);
     const remaining = Math.max(0, state.bonusOffer.expiresAt - now);
     const ratio = remaining / GAME_CONFIG.bonusOfferLifetimeMs;
     const centerX = widget.x + widget.size / 2;
@@ -1009,7 +1014,13 @@ export default function PongGame() {
 
         if (state?.phase === 'playing' && state.bonusOffer) {
           const bounds = getBounds(canvasEl.width, canvasEl.height);
-          const rect = getBonusWidgetRect(bounds, state.bonusOffer.side, canvasEl.width, canvasEl.height);
+          const grid = getGridDimensions(canvasEl.width, canvasEl.height);
+          const rect = getBonusWidgetRect(
+            bounds,
+            { zoneLeft: grid.zoneLeft, zoneRight: grid.zoneRight },
+            state.bonusOffer.side,
+            canvasEl.height,
+          );
           const insideWidget = point.x >= rect.x
             && point.x <= rect.x + rect.size
             && point.y >= rect.y

@@ -12,3 +12,5 @@
 - 2026w10-5.1 — Mobile fullscreen, 5x10 tetris, paddle-based fall, fixed collisions
 - 2026w10-5.2 — Add bonus shop and cascading piece fall
 - 2026w10-6.1 — Implement bonus widget and improved block physics
+- 2026w10-6.2 — Fix bonus widget side-zone centering
+- 2026w10-7.1 — Center bonus widget in gameplay side zone

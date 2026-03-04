@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { GAME_CONFIG } from '../config/gameConfig';
+import i18n from '../i18n';
+import musicIconUrl from '@fortawesome/fontawesome-free/svgs/solid/music.svg';
+import circleXmarkIconUrl from '@fortawesome/fontawesome-free/svgs/solid/circle-xmark.svg';
+import volumeHighIconUrl from '@fortawesome/fontawesome-free/svgs/solid/volume-high.svg';
+import volumeXmarkIconUrl from '@fortawesome/fontawesome-free/svgs/solid/volume-xmark.svg';
+import gearIconUrl from '@fortawesome/fontawesome-free/svgs/solid/gear.svg';
+import flagCheckeredIconUrl from '@fortawesome/fontawesome-free/svgs/solid/flag-checkered.svg';
 
 interface Vec2 { x: number; y: number }
 interface Ball { pos: Vec2; vel: Vec2; radius: number; color: string }
@@ -13,6 +20,9 @@ interface ScoreDeltaFx {
   color: string;
   startedAt: number;
   durationMs: number;
+  x?: number;
+  y?: number;
+  sizeScale?: number;
 }
 
 const TETROMINO_SHAPES: ReadonlyArray<ReadonlyArray<Vec2>> = [
@@ -26,7 +36,7 @@ const TETROMINO_SHAPES: ReadonlyArray<ReadonlyArray<Vec2>> = [
 ];
 
 type Side = 'left' | 'right';
-type Phase = 'countdown' | 'playing' | 'gameover' | 'finished';
+type Phase = 'countdown' | 'playing' | 'paused' | 'gameover' | 'finished';
 type BonusKind = 'palette-color' | 'white-color';
 
 interface BonusOffer {
@@ -63,6 +73,7 @@ interface GameState {
   sessionScore: number;
   musicEnabled: boolean;
   soundsEnabled: boolean;
+  lastPaddleTouchAt: number;
 }
 
 interface Keys {
@@ -93,9 +104,68 @@ interface Bounds {
   sideMargin: number;
 }
 
+interface CircularButton {
+  cx: number;
+  cy: number;
+  r: number;
+}
+
+interface TopPanelButtons {
+  finish: CircularButton | null;
+  music: CircularButton;
+  sounds: CircularButton;
+  settings: CircularButton;
+}
+
+type UiIconKey = 'musicOn' | 'musicOff' | 'soundsOn' | 'soundsOff' | 'settings' | 'finish';
+type UiIcons = Partial<Record<UiIconKey, HTMLImageElement>>;
+
+function resolvePublicAssetPath(path: string): string {
+  const normalized = path.replace(/^\/+/, '');
+  const base = import.meta.env.BASE_URL.endsWith('/')
+    ? import.meta.env.BASE_URL
+    : `${import.meta.env.BASE_URL}/`;
+  return `${base}${normalized}`;
+}
+
+function getTopPanelButtons(
+  width: number,
+  bounds: Bounds,
+  phase: Phase,
+  panelPadding: number,
+): TopPanelButtons {
+  const radius = Math.max(16, bounds.topPanelHeight * 0.46);
+  const cy = bounds.topPanelHeight / 2;
+  const gap = Math.max(8, radius * 0.35);
+
+  const settingsCx = width - panelPadding - radius;
+  const soundsCx = settingsCx - (radius * 2 + gap);
+  const musicCx = soundsCx - (radius * 2 + gap);
+
+  const finishCx = panelPadding + radius + Math.max(120, radius * 2.9);
+
+  return {
+    finish: phase === 'playing'
+      ? { cx: finishCx, cy, r: radius }
+      : null,
+    music: { cx: musicCx, cy, r: radius },
+    sounds: { cx: soundsCx, cy, r: radius },
+    settings: { cx: settingsCx, cy, r: radius },
+  };
+}
+
+function isPointInCircle(x: number, y: number, button: CircularButton): boolean {
+  const dx = x - button.cx;
+  const dy = y - button.cy;
+  return dx * dx + dy * dy <= button.r * button.r;
+}
+
 function getBounds(w: number, h: number): Bounds {
   const topPanelHeight = Math.max(h * GAME_CONFIG.topPanelRatio, 50);
-  const sideMargin = Math.max(w * GAME_CONFIG.sideMarginRatio, 40);
+  const sideMargin = Math.max(
+    w * GAME_CONFIG.sideMarginRatio,
+    GAME_CONFIG.paddleWidth,
+  );
 
   return {
     left: sideMargin,
@@ -175,6 +245,7 @@ function makeInitialState(w: number, h: number, preserveTotal = false, prevTotal
     sessionScore: 0,
     musicEnabled: musicOn,
     soundsEnabled: soundsOn,
+    lastPaddleTouchAt: now,
   };
 }
 
@@ -350,7 +421,12 @@ function canShowBonusOffer(state: GameState, now: number): boolean {
   return now - state.ballSideEnteredAt >= GAME_CONFIG.bonusRequiredZoneStayMs;
 }
 
-function pushScoreFx(state: GameState, delta: number, now: number): void {
+function pushScoreFx(
+  state: GameState,
+  delta: number,
+  now: number,
+  options?: { x?: number; y?: number; sizeScale?: number },
+): void {
   const color = delta >= 0 ? 'rgb(80, 235, 120)' : 'rgb(255, 95, 95)';
   const text = delta >= 0 ? `+${delta}` : `${delta}`;
 
@@ -361,6 +437,9 @@ function pushScoreFx(state: GameState, delta: number, now: number): void {
     color,
     startedAt: now,
     durationMs: GAME_CONFIG.scoreFxDurationMs,
+    x: options?.x,
+    y: options?.y,
+    sizeScale: options?.sizeScale,
   });
   state.nextScoreFxId += 1;
 }
@@ -491,6 +570,8 @@ function stepGame(
   touch: TouchControls,
   mouse: MouseControls,
   playSound: (key: string) => void,
+  isMobile: boolean,
+  hasActivePaddleTouch: boolean,
 ): GameState {
   const now = performance.now();
   const s: GameState = {
@@ -532,9 +613,27 @@ function stepGame(
     return s;
   }
 
+  if (s.phase === 'paused') {
+    return s;
+  }
+
   if (s.phase === 'gameover' || s.phase === 'finished') {
     updatePaddles(s, keys, touch, mouse, paddleSpeed, bounds);
     return s;
+  }
+
+  if (isMobile) {
+    const hasTapLikeInput = hasActivePaddleTouch
+      || touch.left !== null
+      || touch.right !== null
+      || mouse.active;
+
+    if (hasTapLikeInput) {
+      s.lastPaddleTouchAt = now;
+    } else if (now - s.lastPaddleTouchAt > GAME_CONFIG.mobileAutoPauseDelayMs) {
+      s.phase = 'paused';
+      return s;
+    }
   }
 
   updatePaddles(s, keys, touch, mouse, paddleSpeed, bounds);
@@ -745,7 +844,11 @@ function stepGame(
   if (newOuterSide !== null) {
     if (s.lastOuterSide !== null && s.lastOuterSide !== newOuterSide) {
       s.score += 1;
-      pushScoreFx(s, 1, now);
+      pushScoreFx(s, 1, now, {
+        x: s.ball.pos.x,
+        y: s.ball.pos.y - s.ball.radius * 1.6,
+        sizeScale: 2.1,
+      });
       playSound('scoreGain');
     }
     s.lastOuterSide = newOuterSide;
@@ -761,7 +864,11 @@ function stepGame(
   return s;
 }
 
-function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
+function renderGame(
+  ctx: CanvasRenderingContext2D,
+  state: GameState,
+  uiIcons: UiIcons,
+): void {
   const { width: w, height: h } = ctx.canvas;
   const now = performance.now();
   const bounds = getBounds(w, h);
@@ -778,13 +885,15 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
   ctx.lineWidth = 1;
   ctx.strokeRect(0, bounds.topPanelHeight - 1, w, 1);
 
+  const panelPadding = Math.max(bounds.sideMargin, GAME_CONFIG.paddleWidth);
+
   // Score in top panel (left side)
   const scoreFontSize = Math.round(bounds.topPanelHeight * 0.5);
   ctx.font = `bold ${scoreFontSize}px monospace`;
   ctx.fillStyle = 'rgba(0,0,0,0.8)';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(`SCORE: ${state.score}`, 20, bounds.topPanelHeight / 2);
+  ctx.fillText(`${i18n.t('score')}: ${state.score}`, panelPadding, bounds.topPanelHeight / 2);
 
   // Score change animation (+/-)
   state.scoreFx.forEach((fx) => {
@@ -795,63 +904,74 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
 
     const t = age / fx.durationMs;
     const alpha = 1 - t;
-    const y = bounds.topPanelHeight / 2 - t * Math.max(14, bounds.topPanelHeight * 0.35);
+    const rise = t * Math.max(18, scoreFontSize * 0.7);
+    const x = fx.x ?? (panelPadding + Math.round(scoreFontSize * 3.4));
+    const y = (fx.y ?? (bounds.topPanelHeight / 2)) - rise;
+    const isNearBall = fx.x !== undefined && fx.y !== undefined;
+    const sizeScale = fx.sizeScale ?? 1;
+    const fontSize = isNearBall
+      ? Math.round(Math.max(state.ball.radius * 2.7, scoreFontSize * 1.35) * sizeScale)
+      : Math.round(scoreFontSize * 0.6 * sizeScale);
 
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.font = `bold ${Math.round(scoreFontSize * 0.6)}px monospace`;
+    ctx.font = `bold ${fontSize}px monospace`;
     ctx.fillStyle = fx.color;
-    ctx.textAlign = 'left';
+    ctx.textAlign = isNearBall ? 'center' : 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(fx.text, 20 + Math.round(scoreFontSize * 3.4), y);
+    ctx.fillText(fx.text, x, y);
     ctx.restore();
   });
 
-  // Buttons in top panel
-  const buttonSize = bounds.topPanelHeight * 0.55;
-  const buttonGap = 10;
-  const buttonY = bounds.topPanelHeight / 2 - buttonSize / 2;
-  
-  // Right side buttons: Music, Sounds, Settings
-  const rightButtonsX = w - (buttonSize + buttonGap) * 3 - 10;
-  
-  // Music button
-  ctx.fillStyle = state.musicEnabled ? 'rgba(100,200,100,0.6)' : 'rgba(100,100,100,0.4)';
-  ctx.fillRect(rightButtonsX, buttonY, buttonSize, buttonSize);
-  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(rightButtonsX, buttonY, buttonSize, buttonSize);
-  ctx.font = `${Math.round(buttonSize * 0.35)}px monospace`;
-  ctx.fillStyle = 'rgba(0,0,0,0.9)';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('♪', rightButtonsX + buttonSize / 2, buttonY + buttonSize / 2);
-  
-  // Sounds button
-  const soundsX = rightButtonsX + buttonSize + buttonGap;
-  ctx.fillStyle = state.soundsEnabled ? 'rgba(100,200,100,0.6)' : 'rgba(100,100,100,0.4)';
-  ctx.fillRect(soundsX, buttonY, buttonSize, buttonSize);
-  ctx.strokeRect(soundsX, buttonY, buttonSize, buttonSize);
-  ctx.fillText('♫', soundsX + buttonSize / 2, buttonY + buttonSize / 2);
-  
-  // Settings button
-  const settingsX = soundsX + buttonSize + buttonGap;
-  ctx.fillStyle = 'rgba(100,100,100,0.4)';
-  ctx.fillRect(settingsX, buttonY, buttonSize, buttonSize);
-  ctx.strokeRect(settingsX, buttonY, buttonSize, buttonSize);
-  ctx.font = `${Math.round(buttonSize * 0.25)}px monospace`;
-  ctx.fillText('SET', settingsX + buttonSize / 2, buttonY + buttonSize / 2);
-  
-  // Finish button (left side, after score)
-  if (state.phase === 'playing') {
-    const finishX = 270;
-    const finishWidth = buttonSize * 1.5;
-    ctx.fillStyle = 'rgba(200,80,80,0.6)';
-    ctx.fillRect(finishX, buttonY, finishWidth, buttonSize);
-    ctx.strokeRect(finishX, buttonY, finishWidth, buttonSize);
-    ctx.font = `${Math.round(buttonSize * 0.28)}px monospace`;
+  // Circular icon buttons in top panel
+  const buttons = getTopPanelButtons(w, bounds, state.phase, panelPadding);
+
+  const drawRoundButton = (
+    button: CircularButton,
+    fill: string,
+    iconKey: UiIconKey,
+    fallbackLabel: string,
+    iconScale = 1.35,
+  ) => {
+    ctx.beginPath();
+    ctx.arc(button.cx, button.cy, button.r, 0, Math.PI * 2);
+    ctx.fillStyle = fill;
+    ctx.fill();
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.stroke();
+
+    const icon = uiIcons[iconKey];
+    if (icon && icon.complete && icon.naturalWidth > 0) {
+      const size = Math.round(button.r * iconScale * 1.45);
+      ctx.drawImage(icon, button.cx - size / 2, button.cy - size / 2, size, size);
+      return;
+    }
+
+    ctx.font = `bold ${Math.round(button.r * 1.15)}px monospace`;
     ctx.fillStyle = 'rgba(0,0,0,0.9)';
-    ctx.fillText('FINISH', finishX + finishWidth / 2, buttonY + buttonSize / 2);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(fallbackLabel, button.cx, button.cy + 1);
+  };
+
+  drawRoundButton(
+    buttons.music,
+    state.musicEnabled ? 'rgba(92, 199, 92, 0.85)' : 'rgba(120,120,120,0.6)',
+    state.musicEnabled ? 'musicOn' : 'musicOff',
+    state.musicEnabled ? '♪' : '✕',
+  );
+  drawRoundButton(
+    buttons.sounds,
+    state.soundsEnabled ? 'rgba(92, 199, 92, 0.85)' : 'rgba(120,120,120,0.6)',
+    state.soundsEnabled ? 'soundsOn' : 'soundsOff',
+    state.soundsEnabled ? '🔊' : '🔇',
+  );
+  drawRoundButton(buttons.settings, 'rgba(120,120,120,0.7)', 'settings', '⚙', 1.25);
+
+  if (buttons.finish !== null) {
+    drawRoundButton(buttons.finish, 'rgba(214, 76, 76, 0.9)', 'finish', '⛳', 1.24);
   }
 
   // Tetris zone highlight
@@ -957,11 +1077,11 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
 
     ctx.font = `bold ${Math.round(widget.size * 0.12)}px monospace`;
     ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.fillText(`${state.bonusOffer.cost} pts`, centerX, centerY + widget.size * 0.08);
+    ctx.fillText(`${state.bonusOffer.cost} ${i18n.t('bonusPoints')}`, centerX, centerY + widget.size * 0.08);
 
     ctx.font = `${Math.round(widget.size * 0.1)}px monospace`;
     ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.fillText('dur: 0s', centerX, centerY + widget.size * 0.25);
+    ctx.fillText(`${i18n.t('bonusDuration')}: 0s`, centerX, centerY + widget.size * 0.25);
   }
 
   if (state.phase === 'countdown') {
@@ -973,7 +1093,22 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
     ctx.fillStyle = '#fff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(state.countdown > 0 ? String(state.countdown) : 'GO!', w / 2, h / 2);
+    ctx.fillText(state.countdown > 0 ? String(state.countdown) : i18n.t('countdownGo'), w / 2, h / 2);
+  }
+
+  if (state.phase === 'paused') {
+    ctx.fillStyle = 'rgba(0,0,0,0.62)';
+    ctx.fillRect(bounds.left, bounds.top, bounds.width, bounds.height);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `bold ${Math.round(h * 0.09)}px monospace`;
+    ctx.fillStyle = '#fff';
+    ctx.fillText(i18n.t('pauseTitle'), w / 2, h * 0.45);
+
+    ctx.font = `${Math.round(h * 0.038)}px monospace`;
+    ctx.fillStyle = 'rgba(255,255,255,0.78)';
+    ctx.fillText(i18n.t('pauseHint'), w / 2, h * 0.56);
   }
 
   if (state.phase === 'gameover') {
@@ -984,11 +1119,11 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
     ctx.textBaseline = 'middle';
     ctx.font = `bold ${Math.round(h * 0.1)}px monospace`;
     ctx.fillStyle = '#fff';
-    ctx.fillText('GAME OVER', w / 2, h * 0.44);
+    ctx.fillText(i18n.t('gameOver'), w / 2, h * 0.44);
 
     ctx.font = `${Math.round(h * 0.045)}px monospace`;
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    ctx.fillText('Press ENTER or tap to restart', w / 2, h * 0.56);
+    ctx.fillText(i18n.t('restartHint'), w / 2, h * 0.56);
   }
 
   if (state.phase === 'finished') {
@@ -999,20 +1134,20 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
     ctx.textBaseline = 'middle';
     ctx.font = `bold ${Math.round(h * 0.08)}px monospace`;
     ctx.fillStyle = '#FFD700';
-    ctx.fillText('GAME FINISHED', w / 2, h * 0.35);
+    ctx.fillText(i18n.t('gameFinished'), w / 2, h * 0.35);
 
     ctx.font = `bold ${Math.round(h * 0.055)}px monospace`;
     ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.fillText(`Session Score: ${state.sessionScore}`, w / 2, h * 0.48);
+    ctx.fillText(`${i18n.t('sessionScore')}: ${state.sessionScore}`, w / 2, h * 0.48);
 
     const newTotal = state.totalScore + state.sessionScore;
     ctx.font = `bold ${Math.round(h * 0.045)}px monospace`;
     ctx.fillStyle = 'rgba(100,255,100,0.85)';
-    ctx.fillText(`Total Score: ${newTotal}`, w / 2, h * 0.58);
+    ctx.fillText(`${i18n.t('totalScore')}: ${newTotal}`, w / 2, h * 0.58);
 
     ctx.font = `${Math.round(h * 0.035)}px monospace`;
     ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.fillText('Tap or press ENTER to start new game', w / 2, h * 0.7);
+    ctx.fillText(i18n.t('finishedHint'), w / 2, h * 0.7);
   }
 
   if (state.phase === 'countdown' && state.paddleHitCount === 0) {
@@ -1021,9 +1156,9 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
     ctx.fillStyle = GAME_CONFIG.controlsHintColor;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
-    ctx.fillText('Q/A - left paddle', bounds.left + GAME_CONFIG.paddleWidth + 12, bounds.bottom - 12);
+    ctx.fillText(i18n.t('controlsLeft'), bounds.left + GAME_CONFIG.paddleWidth + 12, bounds.bottom - 12);
     ctx.textAlign = 'right';
-    ctx.fillText("]/' - right paddle | Hold LMB: sync", bounds.right - GAME_CONFIG.paddleWidth - 12, bounds.bottom - 12);
+    ctx.fillText(i18n.t('controlsRight'), bounds.right - GAME_CONFIG.paddleWidth - 12, bounds.bottom - 12);
   }
 }
 
@@ -1045,18 +1180,45 @@ export default function PongGame() {
   const activeTouchesRef = useRef<Map<number, Side>>(new Map());
   const rafRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
+  const isTouchDeviceRef = useRef<boolean>(
+    'ontouchstart' in window || navigator.maxTouchPoints > 0,
+  );
   const [portraitMode, setPortraitMode] = useState(false);
   
   // Audio system
   const musicRef = useRef<HTMLAudioElement[]>([]);
   const soundsRef = useRef<{ [key: string]: HTMLAudioElement }>({});
   const currentMusicIndexRef = useRef<number>(0);
+  const uiIconsRef = useRef<UiIcons>({});
+
+  // Load canvas SVG UI icons from Font Awesome package assets
+  useEffect(() => {
+    const iconSources: Record<UiIconKey, string> = {
+      musicOn: musicIconUrl,
+      musicOff: circleXmarkIconUrl,
+      soundsOn: volumeHighIconUrl,
+      soundsOff: volumeXmarkIconUrl,
+      settings: gearIconUrl,
+      finish: flagCheckeredIconUrl,
+    };
+
+    (Object.entries(iconSources) as Array<[UiIconKey, string]>).forEach(([key, src]) => {
+      const img = new Image();
+      img.decoding = 'async';
+      img.src = src;
+      uiIconsRef.current[key] = img;
+    });
+
+    return () => {
+      uiIconsRef.current = {};
+    };
+  }, []);
 
   // Load audio on mount
   useEffect(() => {
     // Load music tracks
     GAME_CONFIG.musicTracks.forEach((src) => {
-      const audio = new Audio(src);
+      const audio = new Audio(resolvePublicAssetPath(src));
       audio.loop = false;
       audio.volume = 0.3;
       musicRef.current.push(audio);
@@ -1081,7 +1243,7 @@ export default function PongGame() {
 
     // Load sound effects
     Object.entries(GAME_CONFIG.sounds).forEach(([key, src]) => {
-      const audio = new Audio(src);
+      const audio = new Audio(resolvePublicAssetPath(src));
       audio.volume = 0.5;
       soundsRef.current[key] = audio;
     });
@@ -1176,6 +1338,9 @@ export default function PongGame() {
 
       const dt = Math.min(timestamp - lastTimeRef.current, 50);
       lastTimeRef.current = timestamp;
+      const hasActivePaddleTouch = mouseRef.current.active
+        || touchRef.current.left !== null
+        || touchRef.current.right !== null;
 
       stateRef.current = stepGame(
         stateRef.current,
@@ -1186,8 +1351,10 @@ export default function PongGame() {
         touchRef.current,
         mouseRef.current,
         playSound,
+        isTouchDeviceRef.current,
+        hasActivePaddleTouch,
       );
-      renderGame(ctx, stateRef.current);
+      renderGame(ctx, stateRef.current, uiIconsRef.current);
 
       rafRef.current = requestAnimationFrame(loop);
     }
@@ -1235,6 +1402,20 @@ export default function PongGame() {
         case 'Enter':
           if (stateRef.current?.phase === 'gameover') {
             stateRef.current = makeInitialState(canvasEl.width, canvasEl.height);
+          } else if (stateRef.current?.phase === 'finished') {
+            stateRef.current = makeInitialState(
+              canvasEl.width,
+              canvasEl.height,
+              true,
+              stateRef.current.totalScore + stateRef.current.sessionScore,
+              stateRef.current.musicEnabled,
+              stateRef.current.soundsEnabled,
+            );
+          } else if (stateRef.current?.phase === 'paused') {
+            stateRef.current.phase = 'countdown';
+            stateRef.current.countdown = GAME_CONFIG.countdownSeconds;
+            stateRef.current.phaseTimer = 0;
+            stateRef.current.lastPaddleTouchAt = performance.now();
           }
           break;
         case ' ':
@@ -1275,8 +1456,20 @@ export default function PongGame() {
         return;
       }
 
+      const state = stateRef.current;
+      if (state?.phase === 'paused') {
+        state.phase = 'countdown';
+        state.countdown = GAME_CONFIG.countdownSeconds;
+        state.phaseTimer = 0;
+      }
+
       mouseRef.current.active = true;
       mouseRef.current.y = getGameY(e.clientX, e.clientY);
+
+      if (state) {
+        state.lastPaddleTouchAt = performance.now();
+      }
+
       e.preventDefault();
     };
 
@@ -1286,6 +1479,9 @@ export default function PongGame() {
       }
 
       mouseRef.current.y = getGameY(e.clientX, e.clientY);
+      if (stateRef.current) {
+        stateRef.current.lastPaddleTouchAt = performance.now();
+      }
       e.preventDefault();
     };
 
@@ -1301,61 +1497,60 @@ export default function PongGame() {
     const handleTouchStart = (e: TouchEvent) => {
       e.preventDefault();
       const state = stateRef.current;
-      
-      if (state?.phase === 'gameover' || state?.phase === 'finished') {
+      if (!state) {
+        return;
+      }
+
+      if (state.phase === 'paused') {
+        state.phase = 'countdown';
+        state.countdown = GAME_CONFIG.countdownSeconds;
+        state.phaseTimer = 0;
+        state.lastPaddleTouchAt = performance.now();
+        return;
+      }
+
+      if (state.phase === 'gameover' || state.phase === 'finished') {
         stateRef.current = makeInitialState(
           canvasEl.width,
           canvasEl.height,
           state.phase === 'finished',
           state.totalScore + state.sessionScore,
           state.musicEnabled,
-          state.soundsEnabled
+          state.soundsEnabled,
         );
         return;
       }
 
+      const bounds = getBounds(canvasEl.width, canvasEl.height);
+      const grid = getGridDimensions(canvasEl.width, canvasEl.height);
+      const panelPadding = Math.max(bounds.sideMargin, GAME_CONFIG.paddleWidth);
+      const buttons = getTopPanelButtons(canvasEl.width, bounds, state.phase, panelPadding);
+
       for (let i = 0; i < e.changedTouches.length; i += 1) {
         const touch = e.changedTouches[i];
         const point = getGamePoint(touch.clientX, touch.clientY);
-
-        if (!state) continue;
-
-        const bounds = getBounds(canvasEl.width, canvasEl.height);
-        const grid = getGridDimensions(canvasEl.width, canvasEl.height);
         
         // Check button clicks in top panel
         if (point.y < bounds.topPanelHeight) {
-          const buttonSize = bounds.topPanelHeight * 0.55;
-          const buttonGap = 10;
-          const buttonY = bounds.topPanelHeight / 2 - buttonSize / 2;
-          const rightButtonsX = canvasEl.width - (buttonSize + buttonGap) * 3 - 10;
-          
-          // Music button
-          if (point.x >= rightButtonsX && point.x <= rightButtonsX + buttonSize &&
-              point.y >= buttonY && point.y <= buttonY + buttonSize) {
+          if (isPointInCircle(point.x, point.y, buttons.music)) {
             toggleMusic();
             continue;
           }
-          
-          // Sounds button
-          const soundsX = rightButtonsX + buttonSize + buttonGap;
-          if (point.x >= soundsX && point.x <= soundsX + buttonSize &&
-              point.y >= buttonY && point.y <= buttonY + buttonSize) {
+
+          if (isPointInCircle(point.x, point.y, buttons.sounds)) {
             toggleSounds();
             continue;
           }
-          
-          // Finish button
-          if (state.phase === 'playing') {
-            const finishX = 270;
-            const finishWidth = buttonSize * 1.5;
-            if (point.x >= finishX && point.x <= finishX + finishWidth &&
-                point.y >= buttonY && point.y <= buttonY + buttonSize) {
-              finishGame();
-              continue;
-            }
+
+          if (buttons.finish !== null && isPointInCircle(point.x, point.y, buttons.finish)) {
+            finishGame();
+            continue;
           }
-          
+
+          if (isPointInCircle(point.x, point.y, buttons.settings)) {
+            continue;
+          }
+
           // Ignore other clicks in top panel
           continue;
         }
@@ -1408,6 +1603,7 @@ export default function PongGame() {
         }
 
         activeTouchesRef.current.set(touch.identifier, side);
+        state.lastPaddleTouchAt = performance.now();
 
         const y = point.y;
         if (side === 'left') {
@@ -1420,6 +1616,7 @@ export default function PongGame() {
 
     const handleTouchMove = (e: TouchEvent) => {
       e.preventDefault();
+      const state = stateRef.current;
       for (let i = 0; i < e.changedTouches.length; i += 1) {
         const touch = e.changedTouches[i];
         const side = activeTouchesRef.current.get(touch.identifier);
@@ -1427,8 +1624,14 @@ export default function PongGame() {
 
         if (side === 'left') {
           touchRef.current.left = y;
+          if (state) {
+            state.lastPaddleTouchAt = performance.now();
+          }
         } else if (side === 'right') {
           touchRef.current.right = y;
+          if (state) {
+            state.lastPaddleTouchAt = performance.now();
+          }
         }
       }
     };

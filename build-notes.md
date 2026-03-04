@@ -17,3 +17,9 @@
 - 2026w10-7.2 — Gate bonus display and add score delta animations
 - 2026w10-8.1 — Add bonus visibility rules, Space purchase, and audio assets folder
 - 2026w10-9.1 — Add audio system, UI buttons, finish feature, paddle colors, improved touch controls, and bonus logic fixes
+- 2026w10-9.2 — Fix BASE_URL audio loading, add i18n RU default, mobile auto-pause, and Font Awesome circular controls
+- 2026w10-10.1 — Fix BASE_URL audio loading, add i18n RU default, mobile auto-pause, and Font Awesome circular controls
+- 2026w10-10.2 — Fix mobile safe margins for paddles and top-panel UI content
+- 2026w10-11.1 — Fix mobile safe margins for paddles and top-panel UI content
+- 2026w10-11.2 — Treat LMB as tap-like input for debug pause and switch canvas icons to Font Awesome SVG
+- 2026w10-12.1 — Align bonus icon prompts to implemented bonuses and synthwave non-pixel style

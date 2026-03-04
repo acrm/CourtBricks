@@ -2318,6 +2318,49 @@ export default function PongGame() {
         return;
       }
 
+      // Handle mode selection screen
+      if (state.phase === 'mode-select') {
+        const modeButtonHeight = canvasEl.height * 0.12;
+        const modeButtonY = canvasEl.height * 0.25;
+        const modeButtonWidth = canvasEl.width * 0.25;
+        const modeButtons: Array<{ mode: GameMode; x: number; y: number }> = [
+          { mode: '1min', x: canvasEl.width * 0.1, y: modeButtonY },
+          { mode: '3min', x: canvasEl.width * 0.35, y: modeButtonY },
+          { mode: '5min', x: canvasEl.width * 0.6, y: modeButtonY },
+          { mode: 'endless', x: canvasEl.width * 0.1, y: modeButtonY + modeButtonHeight * 1.3 },
+        ];
+
+        for (let i = 0; i < e.changedTouches.length; i += 1) {
+          const touch = e.changedTouches[i];
+          const point = getGamePoint(touch.clientX, touch.clientY);
+
+          for (const btn of modeButtons) {
+            if (
+              point.x >= btn.x &&
+              point.x <= btn.x + modeButtonWidth &&
+              point.y >= btn.y &&
+              point.y <= btn.y + modeButtonHeight
+            ) {
+              selectGameMode(state, btn.mode);
+              return;
+            }
+          }
+
+          // Settings button
+          const settingsBtnY = modeButtonY + modeButtonHeight * 2.8;
+          if (
+            point.x >= canvasEl.width * 0.1 &&
+            point.x <= canvasEl.width * 0.1 + modeButtonWidth &&
+            point.y >= settingsBtnY &&
+            point.y <= settingsBtnY + modeButtonHeight * 0.8
+          ) {
+            state.showSettings = true;
+            return;
+          }
+        }
+        return;
+      }
+
       if (state.phase === 'gameover' || state.phase === 'finished') {
         const endButtons = getEndScreenButtons(canvasEl.width, canvasEl.height);
 

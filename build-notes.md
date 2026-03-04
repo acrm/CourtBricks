@@ -37,3 +37,4 @@
 - 2026w10-18.2 — Fix bonus icon paths to use _256 suffix
 - 2026w10-18.3 — Fix fullscreen API call with trusted event check
 - 2026w10-18.4 — Disable fullscreen request
+- 2026w10-18.5 — Add mode-select screen touch event handling for mobile devices

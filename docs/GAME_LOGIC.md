@@ -6,7 +6,6 @@
 ## Orientation & Playfield
 - The game runs in forced landscape mode.
 - In portrait orientation, the canvas is rotated so gameplay remains horizontal.
-- On touch devices, fullscreen is requested on the first user interaction (subject to browser policy).
 - The layout includes a top panel and side margins; there is no bottom panel.
 - Side margin is never smaller than one paddle width.
 - Distance from each paddle to the nearest screen edge is at least one paddle width.
@@ -36,12 +35,17 @@
 ## Top Panel UI
 - Top panel color is gold.
 - Left side: score label.
-- Endless mode: `Finish` button appears during gameplay.
-- Timed modes (`1:00`, `3:00`, `5:00`): countdown timer is shown instead of `Finish`.
+- Endless mode: elapsed timer is shown and `Finish` button appears during gameplay.
+- Timed modes (`1:00`, `3:00`, `5:00`): countdown timer is shown.
 - Score, `Finish`, and timer are laid out to avoid overlap with score values up to three digits.
 - Right side: `Music`, `Sounds`, `Settings` circular buttons.
 - Buttons are clickable on both desktop and mobile.
 - In canvas, Font Awesome icons are rendered from local SVG assets.
+
+## Main Menu (Mode Select)
+- The mode-select screen includes four mode buttons and two utility buttons: `Settings` and `Statistics`.
+- Both utility buttons are interactive on desktop and mobile.
+- `Statistics` opens a compact summary dialog with rounds count, total/best/average score, and duration metrics.
 
 ## Settings
 - Opened from the `Settings` button in the top panel.
@@ -55,6 +59,7 @@
 - Settings are preserved on round restart.
 - Settings controls are interactive in both desktop and mobile versions (mouse/touch).
 - Tapping/clicking outside the modal closes it.
+- In mobile layout, the bottom hint text is hidden to avoid overlap with the last controls row.
 
 ## Localization
 - UI strings are localized through `i18next`.
@@ -85,8 +90,12 @@
 - Offer appears only if:
   - Ball stayed on one side for at least `5s`.
   - Current score is enough to buy the offer.
-- Offer appears on the side opposite to current ball side.
+- Offer appears in the current ball side outer zone (left or right), not in the center Tetris zone.
 - Offered color is never equal to current ball color.
+- Bonus icon is enlarged by `25%` compared to the previous version.
+- Bonus offer UI shows:
+  - Cost label
+  - Radial expiration timer with remaining-time label
 - Purchase is one tap inside the bonus widget.
 
 ## Scoring

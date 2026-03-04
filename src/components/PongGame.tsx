@@ -310,6 +310,47 @@ function formatModeTimer(modeTimeMs: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+function formatElapsedTimer(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function showStatisticsSummary(state: GameState): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const rounds = state.sessions.length;
+  if (rounds === 0) {
+    window.alert(`${i18n.t('statistics')}\n${i18n.t('statsNoData')}`);
+    return;
+  }
+
+  const scores = state.sessions.map((session) => Math.max(0, Math.floor(session.score)));
+  const totalScore = scores.reduce((sum, score) => sum + score, 0);
+  const bestScore = Math.max(...scores);
+  const averageScore = Math.round(totalScore / rounds);
+  const durations = state.sessions.map((session) => (
+    typeof session.duration === 'number' && session.duration >= 0 ? session.duration : 0
+  ));
+  const bestDuration = Math.max(...durations);
+  const lastDuration = durations[durations.length - 1] ?? 0;
+
+  const lines = [
+    i18n.t('statistics'),
+    `${i18n.t('statsRounds')}: ${rounds}`,
+    `${i18n.t('totalScore')}: ${Math.floor(state.totalScore)}`,
+    `${i18n.t('statsBestScore')}: ${bestScore}`,
+    `${i18n.t('statsAvgScore')}: ${averageScore}`,
+    `${i18n.t('statsBestDuration')}: ${formatElapsedTimer(bestDuration)}`,
+    `${i18n.t('statsLastDuration')}: ${formatElapsedTimer(lastDuration)}`,
+  ];
+
+  window.alert(lines.join('\n'));
+}
+
 function getEndScreenButtons(width: number, height: number): { newGame: Rect; mainMenu: Rect } {
   const buttonWidth = Math.min(320, width * 0.34);
   const buttonHeight = Math.min(74, Math.max(44, height * 0.1));
@@ -848,23 +889,25 @@ function tryPurchaseBonus(state: GameState, now: number, playSound: (key: string
 function getBonusWidgetRect(
   bounds: Bounds,
   grid: { zoneLeft: number; zoneRight: number },
+  side: Side,
   canvasHeight: number,
 ): {
   x: number;
   y: number;
   size: number;
 } {
-  // Icon size is half screen height
-  const size = canvasHeight * 0.5;
-  
-  // Center vertically in the game area
+  const targetSize = canvasHeight * 0.625;
+  const sideZoneWidth = side === 'left'
+    ? grid.zoneLeft - bounds.left
+    : bounds.right - grid.zoneRight;
+  const size = Math.min(targetSize, sideZoneWidth * 0.92, bounds.height * 0.92);
   const y = bounds.top + (bounds.height - size) / 2;
-  
-  // Center horizontally in the tetris zone
-  const zoneCenterX = (grid.zoneLeft + grid.zoneRight) / 2;
+  const sideCenterX = side === 'left'
+    ? (bounds.left + grid.zoneLeft) / 2
+    : (grid.zoneRight + bounds.right) / 2;
 
   return {
-    x: zoneCenterX - size / 2,
+    x: sideCenterX - size / 2,
     y,
     size,
   };
@@ -1150,13 +1193,13 @@ function stepGame(
     s.blocks = fallSettledPiecesOneStep(s.blocks);
   }
 
-  // Bonus offer lifecycle (spawn not more than once in 10s, always opposite to ball side)
+  // Bonus offer lifecycle (spawn not more than once in 10s, follows current ball side)
   const ballSide = getBallSide(s.ball.pos.x, grid.zoneLeft, grid.zoneRight);
   if (ballSide !== s.currentBallSide) {
     s.currentBallSide = ballSide;
     s.ballSideEnteredAt = now;
   }
-  const bonusSide: Side = ballSide === 'left' ? 'right' : 'left';
+  const bonusSide: Side = ballSide;
 
   if (s.bonusOffer) {
     if (now >= s.bonusOffer.expiresAt) {
@@ -1168,7 +1211,7 @@ function stepGame(
     }
   }
 
-  if (!s.bonusOffer && now -s.lastBonusSpawnAt >= GAME_CONFIG.bonusOfferIntervalMs) {
+  if (!s.bonusOffer && now - s.lastBonusSpawnAt >= GAME_CONFIG.bonusOfferIntervalMs) {
     s.bonusOffer = getRandomBonusOffer(bonusSide, now, s.ball.color);
     s.lastBonusSpawnAt = now;
     playSound('bonusAppear');
@@ -1514,10 +1557,19 @@ function renderGame(
   ctx.fill();
 
   if (canShowBonusOffer(state, now) && state.bonusOffer) {
-    const widget = getBonusWidgetRect(bounds, { zoneLeft: grid.zoneLeft, zoneRight: grid.zoneRight }, h);
+    const widget = getBonusWidgetRect(
+      bounds,
+      { zoneLeft: grid.zoneLeft, zoneRight: grid.zoneRight },
+      state.currentBallSide,
+      h,
+    );
+    const remainingMs = Math.max(0, state.bonusOffer.expiresAt - now);
+    const ratio = Math.min(1, remainingMs / GAME_CONFIG.bonusOfferLifetimeMs);
     const iconSize = widget.size;
     const iconX = widget.x;
     const iconY = widget.y;
+    const centerX = iconX + iconSize / 2;
+    const centerY = iconY + iconSize / 2;
 
     // Draw bonus icon
     if (state.bonusOffer.kind === 'white-color') {
@@ -1546,6 +1598,35 @@ function renderGame(
         ctx.fill();
       }
     }
+
+    const ringRadius = iconSize * 0.53;
+    const ringWidth = Math.max(4, Math.round(iconSize * 0.045));
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, ringRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = ringWidth;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, ringRadius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio);
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = ringWidth;
+    ctx.stroke();
+
+    const priceY = Math.max(bounds.top + 12, iconY - Math.max(12, h * 0.02));
+    const timerY = Math.min(bounds.bottom - 12, iconY + iconSize + Math.max(14, h * 0.025));
+    const priceFont = Math.max(14, Math.round(iconSize * 0.09));
+    const timerFont = Math.max(13, Math.round(iconSize * 0.08));
+
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.font = `bold ${priceFont}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${state.bonusOffer.cost} ${i18n.t('bonusPoints')}`, centerX, priceY);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.font = `bold ${timerFont}px monospace`;
+    ctx.fillText(`${i18n.t('bonusDuration')}: ${formatElapsedTimer(remainingMs)}`, centerX, timerY);
   }
 
   if (state.phase === 'countdown') {
@@ -1746,15 +1827,17 @@ function renderGame(
     drawRectButton(controls.langRu, '🇷🇺 RU', state.language === 'ru');
     drawRectButton(controls.langEn, '🇺🇸 EN', state.language === 'en');
 
-    ctx.fillStyle = 'rgba(255,255,255,0.72)';
-    ctx.font = `${hintFont}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(i18n.t('settingsHint'), w / 2, layout.hintY);
+    if (!isMobile) {
+      ctx.fillStyle = 'rgba(255,255,255,0.72)';
+      ctx.font = `${hintFont}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(i18n.t('settingsHint'), w / 2, layout.hintY);
+    }
   }
 
   // Mode selection screen
-  if (state.phase === 'mode-select') {
+  if (state.phase === 'mode-select' && !state.showSettings) {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);
 
@@ -2172,6 +2255,11 @@ export default function PongGame() {
       const point = getGamePoint(e.clientX, e.clientY);
       const bounds = getBounds(canvasEl.width, canvasEl.height, isTouchDeviceRef.current);
 
+      if (handleSettingsInteraction(state, point, canvasEl.width, canvasEl.height)) {
+        e.preventDefault();
+        return;
+      }
+
       if (state.phase === 'gameover' || state.phase === 'finished') {
         const endButtons = getEndScreenButtons(canvasEl.width, canvasEl.height);
         if (isPointInRect(point.x, point.y, endButtons.newGame)) {
@@ -2226,18 +2314,25 @@ export default function PongGame() {
           return;
         }
 
+        // Statistics button
+        if (
+          point.x >= canvasEl.width * 0.65 &&
+          point.x <= canvasEl.width * 0.65 + modeButtonWidth &&
+          point.y >= settingsBtnY &&
+          point.y <= settingsBtnY + modeButtonHeight * 0.8
+        ) {
+          showStatisticsSummary(state);
+          e.preventDefault();
+          return;
+        }
+
         e.preventDefault();
         return;
       }
 
       const panelPadding = Math.max(bounds.sideMargin, GAME_CONFIG.paddleWidth);
-        const showFinishButtonForState = state.phase === 'playing' && state.gameMode === 'endless';
-        const buttons = getTopPanelButtons(canvasEl.width, bounds, showFinishButtonForState, panelPadding);
-
-      if (handleSettingsInteraction(state, point, canvasEl.width, canvasEl.height)) {
-        e.preventDefault();
-        return;
-      }
+      const showFinishButtonForState = state.phase === 'playing' && state.gameMode === 'endless';
+      const buttons = getTopPanelButtons(canvasEl.width, bounds, showFinishButtonForState, panelPadding);
 
       // Check button clicks in top panel
       if (point.y < bounds.topPanelHeight) {
@@ -2310,6 +2405,17 @@ export default function PongGame() {
         return;
       }
 
+      if (state.showSettings) {
+        for (let i = 0; i < e.changedTouches.length; i += 1) {
+          const touch = e.changedTouches[i];
+          const point = getGamePoint(touch.clientX, touch.clientY);
+          if (handleSettingsInteraction(state, point, canvasEl.width, canvasEl.height)) {
+            return;
+          }
+        }
+        return;
+      }
+
       if (state.phase === 'paused') {
         state.phase = 'countdown';
         state.countdown = GAME_CONFIG.countdownSeconds;
@@ -2355,6 +2461,16 @@ export default function PongGame() {
             point.y <= settingsBtnY + modeButtonHeight * 0.8
           ) {
             state.showSettings = true;
+            return;
+          }
+
+          if (
+            point.x >= canvasEl.width * 0.65 &&
+            point.x <= canvasEl.width * 0.65 + modeButtonWidth &&
+            point.y >= settingsBtnY &&
+            point.y <= settingsBtnY + modeButtonHeight * 0.8
+          ) {
+            showStatisticsSummary(state);
             return;
           }
         }
@@ -2422,6 +2538,7 @@ export default function PongGame() {
           const rect = getBonusWidgetRect(
             bounds,
             { zoneLeft: grid.zoneLeft, zoneRight: grid.zoneRight },
+            state.currentBallSide,
             canvasEl.height,
           );
           const insideWidget = point.x >= rect.x

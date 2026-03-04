@@ -38,3 +38,5 @@
 - 2026w10-18.3 — Fix fullscreen API call with trusted event check
 - 2026w10-18.4 — Disable fullscreen request
 - 2026w10-18.5 — Add mode-select screen touch event handling for mobile devices
+- 2026w10-18.6 — Fix mode-select button interactions on mobile and update bonus offer placement with timer labels
+- 2026w10-19.1 — Finalize bonus offer side-zone rendering, statistics button action, and mobile settings hint cleanup

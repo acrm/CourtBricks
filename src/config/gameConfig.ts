@@ -1,16 +1,16 @@
 export const GAME_CONFIG = {
-  paddleWidth: 30,
-  paddleHeightRatio: 0.66,
-  paddleSpeedRatio: 0.012,
+  paddleWidth: 45,
+  paddleHeightRatio: 0.50,
+  paddleSpeedRatio: 0.02,
 
-  ballRadiusRatio: 0.018,
+  ballRadiusRatio: 0.03,
   initialBallSpeedRatio: 0.02,
   ballSpeedIncrement: 0,
 
   countdownSeconds: 3,
 
-  tetrisGridCols: 5,
-  tetrisGridRows: 10,
+  tetrisGridCols: 6,
+  tetrisGridRows: 12,
   centerZoneStartRatio: 0.3,
   centerZoneEndRatio: 0.7,
   tetrisZoneHighlight: 'rgba(64, 164, 255, 0.12)',
@@ -33,9 +33,9 @@ export const GAME_CONFIG = {
   panelBorderColor: 'rgba(255,255,255,0.15)',
 
   // Ball trail configuration
-  ballTrailLength: 8,
-  ballTrailOpacityStart: 0.4,
-  ballTrailOpacityEnd: 0.05,
+  ballTrailLength: 20,
+  ballTrailOpacityStart: 0.3,
+  ballTrailOpacityEnd: 0.01,
 };
 
 export type GameConfig = typeof GAME_CONFIG;

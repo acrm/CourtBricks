@@ -2037,9 +2037,14 @@ export default function PongGame() {
       setPortraitMode(dims.portrait);
       stateRef.current = makeInitialState(canvasEl.width, canvasEl.height);
 
-      // Request fullscreen on mobile devices
+      // Request fullscreen on mobile devices on first interaction
       if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
-        const requestFullscreenOnce = () => {
+        const requestFullscreenOnce = (e: Event) => {
+          // Only proceed if event is trusted (real user interaction)
+          if (!e.isTrusted) {
+            return;
+          }
+
           const rootElement = document.documentElement as HTMLElement & {
             webkitRequestFullscreen?: () => Promise<void> | void;
           };
@@ -2056,10 +2061,12 @@ export default function PongGame() {
           try {
             const result = requestFn.call(rootElement);
             if (result && typeof (result as Promise<void>).catch === 'function') {
-              (result as Promise<void>).catch(() => {});
+              (result as Promise<void>).catch(() => {
+                // Silently ignore fullscreen rejection
+              });
             }
           } catch {
-            // Ignore fullscreen errors silently
+            // Silently ignore fullscreen errors
           }
         };
 

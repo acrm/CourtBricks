@@ -33,3 +33,4 @@
 - 2026w10-16.1 — Finalize timed HUD spacing and finish screen navigation actions
 - 2026w10-16.2 — Refine timed top HUD spacing and end-screen action handling
 - 2026w10-17.1 — Complete finish screen actions and timed mode top-panel behavior
+- 2026w10-18.1 — Add session duration tracking, uptime timer for endless mode, enlarge bonus icons to half screen height centered in zone

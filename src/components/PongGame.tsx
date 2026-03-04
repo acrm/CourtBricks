@@ -44,6 +44,7 @@ interface GameSession {
   mode: GameMode;
   score: number;
   timestamp: number;
+  duration?: number;
 }
 
 interface BonusOffer {
@@ -89,6 +90,7 @@ interface GameState {
   gameMode: GameMode;
   modeTimeMs: number;
   sessions: GameSession[];
+  playStartTime?: number;
 }
 
 interface Keys {
@@ -171,7 +173,7 @@ interface TopPanelButtons {
 
 type UiIconKey = 'musicOn' | 'musicOff' | 'soundsOn' | 'soundsOff' | 'settings' | 'finish';
 type UiIcons = Partial<Record<UiIconKey, HTMLImageElement>>;
-type BonusIconKey = 'red' | 'blue' | 'green' | 'yellow' | 'orange';
+type BonusIconKey = 'red' | 'blue' | 'green' | 'yellow' | 'orange' | 'white';
 type BonusIcons = Partial<Record<BonusIconKey, HTMLImageElement>>;
 
 const TOTAL_SCORE_STORAGE_KEY = 'courtbricks.totalScore';
@@ -256,11 +258,17 @@ function finalizeRoundScore(state: GameState): void {
   state.totalScore += roundScore;
   saveTotalScoreToStorage(state.totalScore);
   
+  // Calculate duration in milliseconds
+  const duration = state.playStartTime !== undefined 
+    ? Math.floor(performance.now() - state.playStartTime)
+    : undefined;
+  
   // Save session to history
   state.sessions.push({
     mode: state.gameMode,
     score: roundScore,
     timestamp: Date.now(),
+    duration,
   });
   saveSessionsToStorage(state.sessions);
 }
@@ -624,6 +632,7 @@ function makeInitialState(
     gameMode: prevState?.gameMode ?? 'endless',
     modeTimeMs: 0,
     sessions,
+    playStartTime: undefined,
   };
 }
 
@@ -839,21 +848,23 @@ function tryPurchaseBonus(state: GameState, now: number, playSound: (key: string
 function getBonusWidgetRect(
   bounds: Bounds,
   grid: { zoneLeft: number; zoneRight: number },
-  offerSide: Side,
   canvasHeight: number,
 ): {
   x: number;
   y: number;
   size: number;
 } {
-  const size = canvasHeight * GAME_CONFIG.bonusWidgetSizeRatio;
+  // Icon size is half screen height
+  const size = canvasHeight * 0.5;
+  
+  // Center vertically in the game area
   const y = bounds.top + (bounds.height - size) / 2;
-  const sideCenterX = offerSide === 'left'
-    ? (bounds.left + grid.zoneLeft) / 2
-    : (grid.zoneRight + bounds.right) / 2;
+  
+  // Center horizontally in the tetris zone
+  const zoneCenterX = (grid.zoneLeft + grid.zoneRight) / 2;
 
   return {
-    x: sideCenterX - size / 2,
+    x: zoneCenterX - size / 2,
     y,
     size,
   };
@@ -1002,6 +1013,7 @@ function stepGame(
       }
       if (s.countdown < 0) {
         s.phase = 'playing';
+        s.playStartTime = now;
       }
     }
     updatePaddles(s, keys, touch, mouse, paddleSpeed, bounds, isMobile);
@@ -1253,16 +1265,22 @@ function stepGame(
     s.lastOuterSide = newOuterSide;
   }
 
-  // Check if timed mode has ended
-  if (s.gameMode !== 'endless' && s.modeTimeMs > 0) {
-    s.modeTimeMs -= dt;
-    if (s.modeTimeMs <= 0) {
-      finalizeRoundScore(s);
-      s.phase = 'finished';
-      s.countdown = GAME_CONFIG.countdownSeconds;
-      s.phaseTimer = 0;
-      playSound('gameOver');
+  // Update game mode timer
+  if (s.gameMode !== 'endless') {
+    // Timed modes: countdown
+    if (s.modeTimeMs > 0) {
+      s.modeTimeMs -= dt;
+      if (s.modeTimeMs <= 0) {
+        finalizeRoundScore(s);
+        s.phase = 'finished';
+        s.countdown = GAME_CONFIG.countdownSeconds;
+        s.phaseTimer = 0;
+        playSound('gameOver');
+      }
     }
+  } else {
+    // Endless mode: count up
+    s.modeTimeMs += dt;
   }
 
   if (s.ball.pos.x + s.ball.radius < bounds.left || s.ball.pos.x - s.ball.radius > bounds.right) {
@@ -1390,8 +1408,8 @@ function renderGame(
     drawRoundButton(buttons.finish, 'rgba(214, 76, 76, 0.9)', 'finish', '⛳', 1.24);
   }
 
-  // Timer in timed modes (instead of finish button)
-  if (state.gameMode !== 'endless' && state.phase !== 'mode-select') {
+  // Timer for all modes (countdown for timed, count up for endless)
+  if (state.phase !== 'mode-select') {
     const timerText = formatModeTimer(state.modeTimeMs);
     const estimatedCharWidth = Math.max(8, bounds.topPanelHeight * 0.24);
     const safeScoreLabel = `${i18n.t('score')}: 999`;
@@ -1496,53 +1514,38 @@ function renderGame(
   ctx.fill();
 
   if (canShowBonusOffer(state, now) && state.bonusOffer) {
-    const widget = getBonusWidgetRect(bounds, { zoneLeft: grid.zoneLeft, zoneRight: grid.zoneRight }, state.bonusOffer.side, h);
-    const remaining = Math.max(0, state.bonusOffer.expiresAt - now);
-    const ratio = remaining / GAME_CONFIG.bonusOfferLifetimeMs;
-    const centerX = widget.x + widget.size / 2;
-    const centerY = widget.y + widget.size / 2;
+    const widget = getBonusWidgetRect(bounds, { zoneLeft: grid.zoneLeft, zoneRight: grid.zoneRight }, h);
+    const iconSize = widget.size;
+    const iconX = widget.x;
+    const iconY = widget.y;
 
-    ctx.fillStyle = 'rgba(20,20,20,0.75)';
-    ctx.fillRect(widget.x, widget.y, widget.size, widget.size);
-    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(widget.x, widget.y, widget.size, widget.size);
-
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, widget.size * 0.49, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio);
-    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
-    ctx.lineWidth = 6;
-    ctx.stroke();
-
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    // Draw bonus icon or letter
+    // Draw bonus icon
     if (state.bonusOffer.kind === 'white-color') {
-      ctx.font = `bold ${Math.round(widget.size * 0.28)}px monospace`;
-      ctx.fillStyle = 'rgba(255,255,255,0.9)';
-      ctx.fillText('W', centerX, centerY - widget.size * 0.2);
+      const iconKey = 'white';
+      const icon = bonusIcons?.[iconKey];
+      if (icon && icon.complete) {
+        ctx.drawImage(icon, iconX, iconY, iconSize, iconSize);
+      } else {
+        // Fallback: white circle
+        ctx.beginPath();
+        ctx.arc(iconX + iconSize / 2, iconY + iconSize / 2, iconSize * 0.4, 0, Math.PI * 2);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fill();
+      }
     } else {
       // Draw bonus color icon
       const iconKey = getColorIcon(state.bonusOffer.color);
       const icon = bonusIcons?.[iconKey];
       if (icon && icon.complete) {
-        const iconSize = widget.size * 0.35;
-        ctx.drawImage(icon, centerX - iconSize / 2, centerY - widget.size * 0.25 - iconSize / 2, iconSize, iconSize);
+        ctx.drawImage(icon, iconX, iconY, iconSize, iconSize);
       } else {
-        ctx.font = `bold ${Math.round(widget.size * 0.28)}px monospace`;
+        // Fallback: colored circle
+        ctx.beginPath();
+        ctx.arc(iconX + iconSize / 2, iconY + iconSize / 2, iconSize * 0.4, 0, Math.PI * 2);
         ctx.fillStyle = state.bonusOffer.color;
-        ctx.fillText('●', centerX, centerY - widget.size * 0.2);
+        ctx.fill();
       }
     }
-
-    ctx.font = `bold ${Math.round(widget.size * 0.12)}px monospace`;
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.fillText(`${state.bonusOffer.cost} ${i18n.t('bonusPoints')}`, centerX, centerY + widget.size * 0.08);
-
-    ctx.font = `${Math.round(widget.size * 0.1)}px monospace`;
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.fillText(`${i18n.t('bonusDuration')}: 0s`, centerX, centerY + widget.size * 0.25);
   }
 
   if (state.phase === 'countdown') {
@@ -1869,6 +1872,7 @@ export default function PongGame() {
       green: 'img/green_bonus.png',
       yellow: 'img/yellow_bonus.png',
       orange: 'img/orange_bonus.png',
+      white: 'img/white_bonus.png',
     };
 
     (Object.entries(bonusIconSources) as Array<[BonusIconKey, string]>).forEach(([key, src]) => {
@@ -2405,7 +2409,6 @@ export default function PongGame() {
           const rect = getBonusWidgetRect(
             bounds,
             { zoneLeft: grid.zoneLeft, zoneRight: grid.zoneRight },
-            state.bonusOffer.side,
             canvasEl.height,
           );
           const insideWidget = point.x >= rect.x

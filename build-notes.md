@@ -28,3 +28,4 @@
 - 2026w10-14.1 — Improve mobile fullscreen, finish button placement, and cumulative scoring
 - 2026w10-14.2 — Fix mobile bottom strip and interactive settings modal controls
 - 2026w10-15.1 — Improve desktop settings layout and mobile tap behavior
+- 2026w10-15.2 — Fix music autoplay, add bonus icons, mode selection screen and game statistics framework

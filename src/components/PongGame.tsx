@@ -36,8 +36,15 @@ const TETROMINO_SHAPES: ReadonlyArray<ReadonlyArray<Vec2>> = [
 ];
 
 type Side = 'left' | 'right';
-type Phase = 'countdown' | 'playing' | 'paused' | 'gameover' | 'finished';
+type Phase = 'mode-select' | 'countdown' | 'playing' | 'paused' | 'gameover' | 'finished';
+type GameMode = 'endless' | '1min' | '3min' | '5min';
 type BonusKind = 'palette-color' | 'white-color';
+
+interface GameSession {
+  mode: GameMode;
+  score: number;
+  timestamp: number;
+}
 
 interface BonusOffer {
   kind: BonusKind;
@@ -79,6 +86,9 @@ interface GameState {
   language: 'ru' | 'en';
   showSettings: boolean;
   lastPaddleTouchAt: number;
+  gameMode: GameMode;
+  modeTimeMs: number;
+  sessions: GameSession[];
 }
 
 interface Keys {
@@ -161,8 +171,11 @@ interface TopPanelButtons {
 
 type UiIconKey = 'musicOn' | 'musicOff' | 'soundsOn' | 'soundsOff' | 'settings' | 'finish';
 type UiIcons = Partial<Record<UiIconKey, HTMLImageElement>>;
+type BonusIconKey = 'red' | 'blue' | 'green' | 'yellow' | 'orange';
+type BonusIcons = Partial<Record<BonusIconKey, HTMLImageElement>>;
 
 const TOTAL_SCORE_STORAGE_KEY = 'courtbricks.totalScore';
+const SESSIONS_STORAGE_KEY = 'courtbricks.sessions';
 
 function loadTotalScoreFromStorage(): number {
   if (typeof window === 'undefined') {
@@ -184,6 +197,35 @@ function loadTotalScoreFromStorage(): number {
   }
 }
 
+function loadSessionsFromStorage(): GameSession[] {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(SESSIONS_STORAGE_KEY);
+    if (rawValue === null) {
+      return [];
+    }
+    const parsed = JSON.parse(rawValue);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter(
+      (s): s is GameSession =>
+        s &&
+        typeof s === 'object' &&
+        ['endless', '1min', '3min', '5min'].includes(s.mode) &&
+        typeof s.score === 'number' &&
+        typeof s.timestamp === 'number' &&
+        s.score >= 0 &&
+        s.timestamp >= 0,
+    );
+  } catch {
+    return [];
+  }
+}
+
 function saveTotalScoreToStorage(totalScore: number): void {
   if (typeof window === 'undefined') {
     return;
@@ -196,11 +238,52 @@ function saveTotalScoreToStorage(totalScore: number): void {
   }
 }
 
+function saveSessionsToStorage(sessions: GameSession[]): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(sessions));
+  } catch {
+    // Ignore storage failures
+  }
+}
+
 function finalizeRoundScore(state: GameState): void {
   const roundScore = Math.max(0, Math.floor(state.score));
   state.sessionScore = roundScore;
   state.totalScore += roundScore;
   saveTotalScoreToStorage(state.totalScore);
+  
+  // Save session to history
+  state.sessions.push({
+    mode: state.gameMode,
+    score: roundScore,
+    timestamp: Date.now(),
+  });
+  saveSessionsToStorage(state.sessions);
+}
+
+function selectGameMode(state: GameState, mode: GameMode): GameState {
+  const modeTimeMap: Record<GameMode, number> = {
+    endless: 0,
+    '1min': 60000,
+    '3min': 180000,
+    '5min': 300000,
+  };
+  
+  state.gameMode = mode;
+  state.modeTimeMs = modeTimeMap[mode];
+  state.phase = 'countdown';
+  state.countdown = GAME_CONFIG.countdownSeconds;
+  state.phaseTimer = 0;
+  state.score = 0;
+  state.blocks = [];
+  state.activeTetromino = null;
+  state.ballTrail = [];
+  
+  return state;
 }
 
 function resolvePublicAssetPath(path: string): string {
@@ -436,6 +519,19 @@ function getRandomDifferentBonusColor(currentBallColor: string): string {
   return availableColors[Math.floor(Math.random() * availableColors.length)];
 }
 
+function getColorIcon(color: string): BonusIconKey {
+  // Map hex colors to bonus icon keys
+  // blockColors: ['#FF1744' (red), '#F57C00' (orange), '#FBC02D' (yellow), '#388E3C' (green), '#0277BD' (blue)]
+  const colorMap: Record<string, BonusIconKey> = {
+    '#FF1744': 'red',
+    '#F57C00': 'orange',
+    '#FBC02D': 'yellow',
+    '#388E3C': 'green',
+    '#0277BD': 'blue',
+  };
+  return colorMap[color] ?? 'red';
+}
+
 function makeBall(w: number, h: number, towardLeft?: boolean): Ball {
   const bounds = getBounds(w, h);
   const radius = Math.min(bounds.width, bounds.height) * GAME_CONFIG.ballRadiusRatio;
@@ -464,12 +560,13 @@ function makeInitialState(
   const now = performance.now();
   const currentBallSide = getBallSide(ball.pos.x, grid.zoneLeft, grid.zoneRight);
   const totalScore = prevState?.totalScore ?? loadTotalScoreFromStorage();
+  const sessions = prevState?.sessions ?? loadSessionsFromStorage();
 
   return {
     ball,
     leftPaddle: { y: centerPaddleY, dy: 0, height: paddleHeight },
     rightPaddle: { y: centerPaddleY, dy: 0, height: paddleHeight },
-    phase: 'countdown',
+    phase: 'mode-select',
     countdown: GAME_CONFIG.countdownSeconds,
     phaseTimer: 0,
     blocks: [],
@@ -495,6 +592,9 @@ function makeInitialState(
     language: prevState?.language ?? 'ru',
     showSettings: false,
     lastPaddleTouchAt: now,
+    gameMode: prevState?.gameMode ?? 'endless',
+    modeTimeMs: 0,
+    sessions,
   };
 }
 
@@ -858,6 +958,11 @@ function stepGame(
   const grid = getGridDimensions(w, h);
   const paddleSpeed = bounds.height * GAME_CONFIG.paddleSpeedRatio;
 
+  // Mode selection screen - don't update game, just return
+  if (s.phase === 'mode-select') {
+    return s;
+  }
+
   if (s.phase === 'countdown') {
     s.phaseTimer += dt;
     if (s.phaseTimer >= 500) {
@@ -1119,6 +1224,18 @@ function stepGame(
     s.lastOuterSide = newOuterSide;
   }
 
+  // Check if timed mode has ended
+  if (s.gameMode !== 'endless' && s.modeTimeMs > 0) {
+    s.modeTimeMs -= dt;
+    if (s.modeTimeMs <= 0) {
+      finalizeRoundScore(s);
+      s.phase = 'finished';
+      s.countdown = GAME_CONFIG.countdownSeconds;
+      s.phaseTimer = 0;
+      playSound('gameOver');
+    }
+  }
+
   if (s.ball.pos.x + s.ball.radius < bounds.left || s.ball.pos.x - s.ball.radius > bounds.right) {
     finalizeRoundScore(s);
     s.phase = 'gameover';
@@ -1135,6 +1252,7 @@ function renderGame(
   state: GameState,
   uiIcons: UiIcons,
   isMobile: boolean = false,
+  bonusIcons?: BonusIcons,
 ): void {
   const { width: w, height: h } = ctx.canvas;
   const now = performance.now();
@@ -1339,9 +1457,24 @@ function renderGame(
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    ctx.font = `bold ${Math.round(widget.size * 0.28)}px monospace`;
-    ctx.fillStyle = state.bonusOffer.color;
-    ctx.fillText(state.bonusOffer.kind === 'white-color' ? 'W' : '●', centerX, centerY - widget.size * 0.2);
+    // Draw bonus icon or letter
+    if (state.bonusOffer.kind === 'white-color') {
+      ctx.font = `bold ${Math.round(widget.size * 0.28)}px monospace`;
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fillText('W', centerX, centerY - widget.size * 0.2);
+    } else {
+      // Draw bonus color icon
+      const iconKey = getColorIcon(state.bonusOffer.color);
+      const icon = bonusIcons?.[iconKey];
+      if (icon && icon.complete) {
+        const iconSize = widget.size * 0.35;
+        ctx.drawImage(icon, centerX - iconSize / 2, centerY - widget.size * 0.25 - iconSize / 2, iconSize, iconSize);
+      } else {
+        ctx.font = `bold ${Math.round(widget.size * 0.28)}px monospace`;
+        ctx.fillStyle = state.bonusOffer.color;
+        ctx.fillText('●', centerX, centerY - widget.size * 0.2);
+      }
+    }
 
     ctx.font = `bold ${Math.round(widget.size * 0.12)}px monospace`;
     ctx.fillStyle = 'rgba(255,255,255,0.9)';
@@ -1520,6 +1653,69 @@ function renderGame(
     ctx.textBaseline = 'middle';
     ctx.fillText(i18n.t('settingsHint'), w / 2, layout.hintY);
   }
+
+  // Mode selection screen
+  if (state.phase === 'mode-select') {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.fillStyle = '#FFD700';
+    ctx.font = `bold ${Math.round(h * 0.08)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(i18n.t('selectMode'), w / 2, h * 0.1);
+
+    const modeButtonHeight = h * 0.12;
+    const modeButtonY = h * 0.25;
+    const modeButtons: { mode: GameMode; label: string; x: number }[] = [
+      { mode: '1min', label: i18n.t('mode1min') || '1 MIN', x: w * 0.1 },
+      { mode: '3min', label: i18n.t('mode3min') || '3 MIN', x: w * 0.35 },
+      { mode: '5min', label: i18n.t('mode5min') || '5 MIN', x: w * 0.6 },
+      { mode: 'endless', label: i18n.t('modeEndless') || 'ENDLESS', x: w * 0.1 },
+    ];
+
+    const modeButtonWidth = w * 0.25;
+    modeButtons.forEach((btn, idx) => {
+      const y = modeButtonY + (idx < 3 ? 0 : modeButtonHeight * 1.3);
+      ctx.fillStyle = 'rgba(100,100,100,0.8)';
+      ctx.fillRect(btn.x, y, modeButtonWidth, modeButtonHeight);
+      ctx.strokeStyle = '#FFD700';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(btn.x, y, modeButtonWidth, modeButtonHeight);
+      ctx.fillStyle = '#FFF';
+      ctx.font = `bold ${Math.round(modeButtonHeight * 0.45)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(btn.label, btn.x + modeButtonWidth / 2, y + modeButtonHeight / 2);
+    });
+
+    // Settings button
+    const settingsBtnY = modeButtonY + modeButtonHeight * 2.8;
+    ctx.fillStyle = 'rgba(80,80,80,0.8)';
+    ctx.fillRect(w * 0.1, settingsBtnY, modeButtonWidth, modeButtonHeight * 0.8);
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(w * 0.1, settingsBtnY, modeButtonWidth, modeButtonHeight * 0.8);
+    ctx.fillStyle = '#BBB';
+    ctx.font = `${Math.round(modeButtonHeight * 0.35)}px monospace`;
+    ctx.fillText(i18n.t('settings'), w * 0.1 + modeButtonWidth / 2, settingsBtnY + modeButtonHeight * 0.4);
+
+    // Statistics button
+    ctx.fillStyle = 'rgba(80,80,80,0.8)';
+    ctx.fillRect(w * 0.65, settingsBtnY, modeButtonWidth, modeButtonHeight * 0.8);
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(w * 0.65, settingsBtnY, modeButtonWidth, modeButtonHeight * 0.8);
+    ctx.fillStyle = '#BBB';
+    ctx.font = `${Math.round(modeButtonHeight * 0.35)}px monospace`;
+    ctx.fillText(i18n.t('statistics'), w * 0.65 + modeButtonWidth / 2, settingsBtnY + modeButtonHeight * 0.4);
+
+    // Total score display
+    ctx.fillStyle = '#FFD700';
+    ctx.font = `bold ${Math.round(h * 0.05)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText(`${i18n.t('totalScore')}: ${Math.floor(state.totalScore)}`, w / 2, h * 0.82);
+  }
 }
 
 function getCanvasDimensions(): { width: number; height: number; portrait: boolean } {
@@ -1550,6 +1746,7 @@ export default function PongGame() {
   const soundsRef = useRef<{ [key: string]: HTMLAudioElement }>({});
   const currentMusicIndexRef = useRef<number>(0);
   const uiIconsRef = useRef<UiIcons>({});
+  const bonusIconsRef = useRef<BonusIcons>({});
 
   // Load canvas SVG UI icons from Font Awesome package assets
   useEffect(() => {
@@ -1569,8 +1766,25 @@ export default function PongGame() {
       uiIconsRef.current[key] = img;
     });
 
+    // Load bonus icons
+    const bonusIconSources: Record<BonusIconKey, string> = {
+      red: 'img/red_bonus.png',
+      blue: 'img/blue_bonus.png',
+      green: 'img/green_bonus.png',
+      yellow: 'img/yellow_bonus.png',
+      orange: 'img/orange_bonus.png',
+    };
+
+    (Object.entries(bonusIconSources) as Array<[BonusIconKey, string]>).forEach(([key, src]) => {
+      const img = new Image();
+      img.decoding = 'async';
+      img.src = resolvePublicAssetPath(src);
+      bonusIconsRef.current[key] = img;
+    });
+
     return () => {
       uiIconsRef.current = {};
+      bonusIconsRef.current = {};
     };
   }, []);
 
@@ -1591,14 +1805,24 @@ export default function PongGame() {
       const tracks = musicRef.current;
       if (tracks.length === 0) return;
       
+      // Stop all tracks first to prevent overlapping
+      tracks.forEach(t => {
+        t.pause();
+        t.currentTime = 0;
+      });
+      
       currentMusicIndexRef.current = (currentMusicIndexRef.current + 1) % tracks.length;
       const nextTrack = tracks[currentMusicIndexRef.current];
       nextTrack.currentTime = 0;
       nextTrack.play().catch(() => {});
     };
 
+    // Setup ended listener for all tracks
+    const endedListeners = new Map<HTMLAudioElement, () => void>();
     musicRef.current.forEach((track) => {
-      track.addEventListener('ended', playNextMusic);
+      const listener = playNextMusic;
+      endedListeners.set(track, listener);
+      track.addEventListener('ended', listener, { once: false });
     });
 
     // Load sound effects
@@ -1618,11 +1842,18 @@ export default function PongGame() {
     return () => {
       musicRef.current.forEach((track) => {
         track.pause();
+        track.currentTime = 0;
+        const listener = endedListeners.get(track);
+        if (listener) {
+          track.removeEventListener('ended', listener);
+        }
         track.remove();
       });
       Object.values(soundsRef.current).forEach((sound) => {
         sound.remove();
       });
+      musicRef.current = [];
+      soundsRef.current = {};
     };
   }, []);
 
@@ -1763,7 +1994,7 @@ export default function PongGame() {
         isTouchDeviceRef.current,
         hasActivePaddleTouch,
       );
-      renderGame(ctx, stateRef.current, uiIconsRef.current, isTouchDeviceRef.current);
+      renderGame(ctx, stateRef.current, uiIconsRef.current, isTouchDeviceRef.current, bonusIconsRef.current);
 
       rafRef.current = requestAnimationFrame(loop);
     }
@@ -1873,6 +2104,49 @@ export default function PongGame() {
 
       const point = getGamePoint(e.clientX, e.clientY);
       const bounds = getBounds(canvasEl.width, canvasEl.height, isTouchDeviceRef.current);
+
+      // Handle mode selection screen
+      if (state.phase === 'mode-select') {
+        const modeButtonHeight = canvasEl.height * 0.12;
+        const modeButtonY = canvasEl.height * 0.25;
+        const modeButtonWidth = canvasEl.width * 0.25;
+        const modeButtons: Array<{ mode: GameMode; x: number; y: number }> = [
+          { mode: '1min', x: canvasEl.width * 0.1, y: modeButtonY },
+          { mode: '3min', x: canvasEl.width * 0.35, y: modeButtonY },
+          { mode: '5min', x: canvasEl.width * 0.6, y: modeButtonY },
+          { mode: 'endless', x: canvasEl.width * 0.1, y: modeButtonY + modeButtonHeight * 1.3 },
+        ];
+
+        for (const btn of modeButtons) {
+          if (
+            point.x >= btn.x &&
+            point.x <= btn.x + modeButtonWidth &&
+            point.y >= btn.y &&
+            point.y <= btn.y + modeButtonHeight
+          ) {
+            selectGameMode(state, btn.mode);
+            e.preventDefault();
+            return;
+          }
+        }
+
+        // Settings button
+        const settingsBtnY = modeButtonY + modeButtonHeight * 2.8;
+        if (
+          point.x >= canvasEl.width * 0.1 &&
+          point.x <= canvasEl.width * 0.1 + modeButtonWidth &&
+          point.y >= settingsBtnY &&
+          point.y <= settingsBtnY + modeButtonHeight * 0.8
+        ) {
+          state.showSettings = true;
+          e.preventDefault();
+          return;
+        }
+
+        e.preventDefault();
+        return;
+      }
+
       const panelPadding = Math.max(bounds.sideMargin, GAME_CONFIG.paddleWidth);
       const buttons = getTopPanelButtons(canvasEl.width, bounds, state.phase, panelPadding, state.score);
 
@@ -2119,13 +2393,11 @@ export default function PongGame() {
     const handleVisibilityChange = () => {
       if (document.hidden && stateRef.current?.phase === 'playing') {
         stateRef.current.phase = 'paused';
-        // Pause music when losing focus
-        if (stateRef.current.musicEnabled) {
-          const currentTrack = musicRef.current[currentMusicIndexRef.current];
-          if (currentTrack) {
-            currentTrack.pause();
-          }
-        }
+        // Stop all music tracks completely when losing focus
+        musicRef.current.forEach(track => {
+          track.pause();
+          track.currentTime = 0;
+        });
       }
     };
 

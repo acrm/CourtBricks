@@ -41,7 +41,7 @@ export const GAME_CONFIG = {
   // Bonus shop configuration
   bonusOfferIntervalMs: 10000,
   bonusOfferLifetimeMs: 10000,
-  bonusRequiredZoneStayMs: 3000,
+  bonusRequiredZoneStayMs: 5000,
   bonusWidgetSizeRatio: 0.33,
   bonusColorCost: 3,
   bonusWhiteCost: 5,
@@ -55,7 +55,7 @@ export const GAME_CONFIG = {
   topPanelColor: '#FFD700',     // gold
 
   // Audio configuration
-  musicTracks: ['audio/cartoonish.mp3', 'audio/russian.mp3'],
+  musicTracks: ['audio/cartoonish.mp3', 'audio/arabic.mp3', 'audio/russian.mp3'],
   sounds: {
     paddleHit: 'audio/mixkit-golf-ball-hit-2105.wav',
     wallHit: 'audio/mixkit-hitting-golf-ball-2080.wav',

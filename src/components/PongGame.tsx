@@ -125,6 +125,47 @@ interface TopPanelButtons {
 type UiIconKey = 'musicOn' | 'musicOff' | 'soundsOn' | 'soundsOff' | 'settings' | 'finish';
 type UiIcons = Partial<Record<UiIconKey, HTMLImageElement>>;
 
+const TOTAL_SCORE_STORAGE_KEY = 'courtbricks.totalScore';
+
+function loadTotalScoreFromStorage(): number {
+  if (typeof window === 'undefined') {
+    return 0;
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(TOTAL_SCORE_STORAGE_KEY);
+    if (rawValue === null) {
+      return 0;
+    }
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return 0;
+    }
+    return Math.floor(parsed);
+  } catch {
+    return 0;
+  }
+}
+
+function saveTotalScoreToStorage(totalScore: number): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(TOTAL_SCORE_STORAGE_KEY, String(Math.max(0, Math.floor(totalScore))));
+  } catch {
+    // Ignore storage failures
+  }
+}
+
+function finalizeRoundScore(state: GameState): void {
+  const roundScore = Math.max(0, Math.floor(state.score));
+  state.sessionScore = roundScore;
+  state.totalScore += roundScore;
+  saveTotalScoreToStorage(state.totalScore);
+}
+
 function resolvePublicAssetPath(path: string): string {
   const normalized = path.replace(/^\/+/, '');
   const base = import.meta.env.BASE_URL.endsWith('/')
@@ -138,6 +179,7 @@ function getTopPanelButtons(
   bounds: Bounds,
   phase: Phase,
   panelPadding: number,
+  score: number,
 ): TopPanelButtons {
   const radius = Math.max(16, bounds.topPanelHeight * 0.46);
   const cy = bounds.topPanelHeight / 2;
@@ -147,13 +189,15 @@ function getTopPanelButtons(
   const soundsCx = settingsCx - (radius * 2 + gap);
   const musicCx = soundsCx - (radius * 2 + gap);
 
-  let finishCx = null;
-  if (phase === 'playing') {
-    finishCx = musicCx - (radius * 2 + gap);
-  }
+  const scoreLabel = `${i18n.t('score')}: ${score}`;
+  const estimatedCharWidth = Math.max(8, bounds.topPanelHeight * 0.24);
+  const estimatedScoreWidth = scoreLabel.length * estimatedCharWidth;
+  const finishDesiredCx = panelPadding + estimatedScoreWidth + radius + Math.max(14, radius * 0.8);
+  const finishMaxCx = musicCx - (radius * 2 + gap);
+  const finishCx = Math.max(panelPadding + radius, Math.min(finishDesiredCx, finishMaxCx));
 
   return {
-    finish: finishCx !== null
+    finish: phase === 'playing'
       ? { cx: finishCx, cy, r: radius }
       : null,
     music: { cx: musicCx, cy, r: radius },
@@ -224,9 +268,7 @@ function makeBall(w: number, h: number, towardLeft?: boolean): Ball {
 function makeInitialState(
   w: number,
   h: number,
-  preserveTotal = false,
-  prevTotal = 0,
-  prevSettings?: Partial<GameState>,
+  prevState?: Partial<GameState>,
 ): GameState {
   const bounds = getBounds(w, h);
   const paddleHeight = bounds.height * GAME_CONFIG.paddleHeightRatio;
@@ -235,6 +277,7 @@ function makeInitialState(
   const grid = getGridDimensions(w, h);
   const now = performance.now();
   const currentBallSide = getBallSide(ball.pos.x, grid.zoneLeft, grid.zoneRight);
+  const totalScore = prevState?.totalScore ?? loadTotalScoreFromStorage();
 
   return {
     ball,
@@ -256,14 +299,14 @@ function makeInitialState(
     ballSideEnteredAt: now,
     scoreFx: [],
     nextScoreFxId: 1,
-    totalScore: preserveTotal ? prevTotal : 0,
+    totalScore,
     sessionScore: 0,
-    musicEnabled: prevSettings?.musicEnabled ?? true,
-    soundsEnabled: prevSettings?.soundsEnabled ?? true,
-    musicVolume: prevSettings?.musicVolume ?? 1.0,
-    soundsVolume: prevSettings?.soundsVolume ?? 1.0,
-    autoPauseEnabled: prevSettings?.autoPauseEnabled ?? false,
-    language: prevSettings?.language ?? 'ru',
+    musicEnabled: prevState?.musicEnabled ?? true,
+    soundsEnabled: prevState?.soundsEnabled ?? true,
+    musicVolume: prevState?.musicVolume ?? 1.0,
+    soundsVolume: prevState?.soundsVolume ?? 1.0,
+    autoPauseEnabled: prevState?.autoPauseEnabled ?? false,
+    language: prevState?.language ?? 'ru',
     showSettings: false,
     lastPaddleTouchAt: now,
   };
@@ -887,6 +930,7 @@ function stepGame(
   }
 
   if (s.ball.pos.x + s.ball.radius < bounds.left || s.ball.pos.x - s.ball.radius > bounds.right) {
+    finalizeRoundScore(s);
     s.phase = 'gameover';
     s.countdown = GAME_CONFIG.countdownSeconds;
     s.phaseTimer = 0;
@@ -922,11 +966,12 @@ function renderGame(
 
   // Score in top panel (left side)
   const scoreFontSize = Math.round(bounds.topPanelHeight * 0.5);
+  const scoreLabel = `${i18n.t('score')}: ${state.score}`;
   ctx.font = `bold ${scoreFontSize}px monospace`;
   ctx.fillStyle = 'rgba(0,0,0,0.8)';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(`${i18n.t('score')}: ${state.score}`, panelPadding, bounds.topPanelHeight / 2);
+  ctx.fillText(scoreLabel, panelPadding, bounds.topPanelHeight / 2);
 
   // Score change animation (+/-)
   state.scoreFx.forEach((fx) => {
@@ -957,7 +1002,7 @@ function renderGame(
   });
 
   // Circular icon buttons in top panel
-  const buttons = getTopPanelButtons(w, bounds, state.phase, panelPadding);
+  const buttons = getTopPanelButtons(w, bounds, state.phase, panelPadding, state.score);
 
   const drawRoundButton = (
     button: CircularButton,
@@ -1173,10 +1218,9 @@ function renderGame(
     ctx.fillStyle = 'rgba(255,255,255,0.9)';
     ctx.fillText(`${i18n.t('sessionScore')}: ${state.sessionScore}`, w / 2, h * 0.48);
 
-    const newTotal = state.totalScore + state.sessionScore;
     ctx.font = `bold ${Math.round(h * 0.045)}px monospace`;
     ctx.fillStyle = 'rgba(100,255,100,0.85)';
-    ctx.fillText(`${i18n.t('totalScore')}: ${newTotal}`, w / 2, h * 0.58);
+    ctx.fillText(`${i18n.t('totalScore')}: ${state.totalScore}`, w / 2, h * 0.58);
 
     ctx.font = `${Math.round(h * 0.035)}px monospace`;
     ctx.fillStyle = 'rgba(255,255,255,0.7)';
@@ -1388,8 +1432,8 @@ export default function PongGame() {
 
   const finishGame = () => {
     if (!stateRef.current || stateRef.current.phase !== 'playing') return;
+    finalizeRoundScore(stateRef.current);
     stateRef.current.phase = 'finished';
-    stateRef.current.sessionScore = stateRef.current.score;
     playSound('gameOver');
   };
 
@@ -1437,15 +1481,33 @@ export default function PongGame() {
       stateRef.current = makeInitialState(canvasEl.width, canvasEl.height);
 
       // Request fullscreen on mobile devices
-      if ('ontouchstart' in window && document.documentElement.requestFullscreen) {
-        const requestFS = () => {
-          document.documentElement.requestFullscreen().catch(() => {
-            // Fullscreen request failed, ignore
-          });
-          // Remove listener after first attempt
-          canvasEl.removeEventListener('touchstart', requestFS);
+      if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+        const requestFullscreenOnce = () => {
+          const rootElement = document.documentElement as HTMLElement & {
+            webkitRequestFullscreen?: () => Promise<void> | void;
+          };
+
+          if (document.fullscreenElement) {
+            return;
+          }
+
+          const requestFn = rootElement.requestFullscreen ?? rootElement.webkitRequestFullscreen;
+          if (!requestFn) {
+            return;
+          }
+
+          try {
+            const result = requestFn.call(rootElement);
+            if (result && typeof (result as Promise<void>).catch === 'function') {
+              (result as Promise<void>).catch(() => {});
+            }
+          } catch {
+            // Ignore fullscreen errors silently
+          }
         };
-        canvasEl.addEventListener('touchstart', requestFS, { once: true });
+
+        canvasEl.addEventListener('touchstart', requestFullscreenOnce, { once: true, passive: true });
+        canvasEl.addEventListener('pointerdown', requestFullscreenOnce, { once: true, passive: true });
       }
     };
 
@@ -1482,16 +1544,22 @@ export default function PongGame() {
 
     const getGamePoint = (clientX: number, clientY: number): Vec2 => {
       const rect = canvasEl.getBoundingClientRect();
-      if (!portraitMode) {
-        return { x: clientX - rect.left, y: clientY - rect.top };
-      }
-
       const xInElement = clientX - rect.left;
       const yInElement = clientY - rect.top;
 
+      if (!portraitMode) {
+        return {
+          x: (xInElement / rect.width) * canvasEl.width,
+          y: (yInElement / rect.height) * canvasEl.height,
+        };
+      }
+
+      const normalizedX = xInElement / rect.width;
+      const normalizedY = yInElement / rect.height;
+
       return {
-        x: yInElement,
-        y: rect.width - xInElement,
+        x: normalizedY * canvasEl.width,
+        y: (1 - normalizedX) * canvasEl.height,
       };
     };
 
@@ -1523,16 +1591,10 @@ export default function PongGame() {
         case 'Enter':
           if (stateRef.current?.phase === 'gameover') {
             const prevState = stateRef.current;
-            stateRef.current = makeInitialState(canvasEl.width, canvasEl.height, false, 0, prevState);
+            stateRef.current = makeInitialState(canvasEl.width, canvasEl.height, prevState);
           } else if (stateRef.current?.phase === 'finished') {
             const prevState = stateRef.current;
-            stateRef.current = makeInitialState(
-              canvasEl.width,
-              canvasEl.height,
-              true,
-              prevState.totalScore + prevState.sessionScore,
-              prevState,
-            );
+            stateRef.current = makeInitialState(canvasEl.width, canvasEl.height, prevState);
           } else if (stateRef.current?.phase === 'paused') {
             stateRef.current.phase = 'countdown';
             stateRef.current.countdown = GAME_CONFIG.countdownSeconds;
@@ -1586,7 +1648,7 @@ export default function PongGame() {
       const point = getGamePoint(e.clientX, e.clientY);
       const bounds = getBounds(canvasEl.width, canvasEl.height, isTouchDeviceRef.current);
       const panelPadding = Math.max(bounds.sideMargin, GAME_CONFIG.paddleWidth);
-      const buttons = getTopPanelButtons(canvasEl.width, bounds, state.phase, panelPadding);
+      const buttons = getTopPanelButtons(canvasEl.width, bounds, state.phase, panelPadding, state.score);
 
       // Check button clicks in top panel
       if (point.y < bounds.topPanelHeight) {
@@ -1668,20 +1730,14 @@ export default function PongGame() {
       }
 
       if (state.phase === 'gameover' || state.phase === 'finished') {
-        stateRef.current = makeInitialState(
-          canvasEl.width,
-          canvasEl.height,
-          state.phase === 'finished',
-          state.totalScore + state.sessionScore,
-          state,
-        );
+        stateRef.current = makeInitialState(canvasEl.width, canvasEl.height, state);
         return;
       }
 
       const bounds = getBounds(canvasEl.width, canvasEl.height, isTouchDeviceRef.current);
       const grid = getGridDimensions(canvasEl.width, canvasEl.height);
       const panelPadding = Math.max(bounds.sideMargin, GAME_CONFIG.paddleWidth);
-      const buttons = getTopPanelButtons(canvasEl.width, bounds, state.phase, panelPadding);
+      const buttons = getTopPanelButtons(canvasEl.width, bounds, state.phase, panelPadding, state.score);
 
       for (let i = 0; i < e.changedTouches.length; i += 1) {
         const touch = e.changedTouches[i];
@@ -1705,6 +1761,7 @@ export default function PongGame() {
           }
 
           if (isPointInCircle(point.x, point.y, buttons.settings)) {
+            state.showSettings = !state.showSettings;
             continue;
           }
 
@@ -1730,31 +1787,14 @@ export default function PongGame() {
           }
         }
 
-        // Determine which paddle was tapped (touch must be within paddle area +50% tolerance)
-        const leftPaddleX = bounds.left;
-        const rightPaddleX = bounds.right - GAME_CONFIG.paddleWidth;
-        const paddleTolerance = state.leftPaddle.height * 0.5;
-        
+        const sideZonePadding = Math.max(8, GAME_CONFIG.paddleWidth * 0.2);
         let side: Side | null = null;
-        
-        // Check left paddle area
-        const leftPaddleCenterY = state.leftPaddle.y + state.leftPaddle.height / 2;
-        const inLeftPaddleX = point.x >= leftPaddleX && point.x <= leftPaddleX + GAME_CONFIG.paddleWidth * 1.5;
-        const inLeftPaddleY = Math.abs(point.y - leftPaddleCenterY) <= state.leftPaddle.height / 2 + paddleTolerance;
-        
-        if (inLeftPaddleX && inLeftPaddleY) {
+        if (point.x <= grid.zoneLeft - sideZonePadding) {
           side = 'left';
-        }
-        
-        // Check right paddle area
-        const rightPaddleCenterY = state.rightPaddle.y + state.rightPaddle.height / 2;
-        const inRightPaddleX = point.x >= rightPaddleX - GAME_CONFIG.paddleWidth * 0.5 && point.x <= bounds.right;
-        const inRightPaddleY = Math.abs(point.y - rightPaddleCenterY) <= state.rightPaddle.height / 2 + paddleTolerance;
-        
-        if (inRightPaddleX && inRightPaddleY) {
+        } else if (point.x >= grid.zoneRight + sideZonePadding) {
           side = 'right';
         }
-        
+
         if (side === null) {
           continue;
         }

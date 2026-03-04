@@ -5,80 +5,74 @@
 
 ## Orientation & Playfield
 - The game runs in forced landscape mode.
-- In portrait orientation, the canvas is rotated to keep gameplay horizontal.
-- On touch devices, fullscreen is requested on the first touch.
+- In portrait orientation, the canvas is rotated so gameplay remains horizontal.
+- On touch devices, fullscreen is requested on the first user interaction (subject to browser policy).
 - The layout includes a top panel and side margins; there is no bottom panel.
 - Side margin is never smaller than one paddle width.
-- Distance from each paddle to the corresponding screen edge is at least one paddle width.
-- On mobile devices, there is an additional bottom margin of `60px` to prevent touch detection issues at the screen edge.
+- Distance from each paddle to the nearest screen edge is at least one paddle width.
+- On mobile, an additional bottom margin of `60px` is applied to improve touch reliability near device edges.
 
 ## Core Layout
 - The field has three zones:
   - Left paddle zone
   - Center Tetris zone (`6 x 12`)
   - Right paddle zone
-- The center zone is highlighted.
+- The center zone is visually highlighted.
 
 ## Controls
 - Left paddle: `Q` up, `A` down.
 - Right paddle: `]` up, `'` down.
-- Touch paddle control: touch must start on the paddle body with `+50%` vertical tolerance.
-- On mobile devices: moving one paddle automatically synchronizes the other paddle to the same position.
-- Debug purchase: `Space` buys the currently visible bonus offer.
 - Mouse debug mode: hold left mouse button and move vertically to move both paddles together.
-- For desktop non-mobile debugging, pressed left mouse button is treated as tap-like active input for pause logic.
+- On mobile, touching either side zone controls that side and synchronizes both paddles.
+- Debug purchase: `Space` buys the currently visible bonus offer.
 
 ## Pause Behavior
-- When the browser tab loses focus (visibility change), the game automatically pauses.
-- On mobile/touch devices with auto-pause enabled in settings: if there is no active paddle touch for more than `0.1s`, gameplay pauses automatically.
-- Auto-pause is disabled by default; it can be enabled in settings.
-- Pause is exited by tap or mouse click.
-- On resume, countdown runs again (`500ms` per tick, 2x faster than original `1000ms`) before gameplay is unfrozen.
-display.
-- Right side (from left to right): round `Finish` button (only during gameplay), `Music`, `Sounds`, and `Settings` buttons.
-- Buttons use Font Awesome icons.
+- When the browser tab loses focus (`visibilitychange`), gameplay pauses immediately.
+- On mobile/touch devices with auto-pause enabled in settings, gameplay pauses after `0.1s` without active touch input.
+- Auto-pause is disabled by default and can be changed in settings.
+- Pause exits on tap/click and resumes through countdown.
+- Countdown tick is `500ms` (2x faster than the original `1000ms`).
+
+## Top Panel UI
+- Top panel color is gold.
+- Left side: score label and `Finish` button (`Finish` appears during gameplay only and is placed to the right of score).
+- Right side: `Music`, `Sounds`, `Settings` circular buttons.
 - Buttons are clickable on both desktop and mobile.
-- In canvas, Font Awesome buttons are rendered from local SVG assets (npm package), not via HTML icon fonts.
-- Top panel content uses horizontal safe padding equal to gameplay side padding.
+- In canvas, Font Awesome icons are rendered from local SVG assets.
 
 ## Settings
-- Accessible via the `Settings` button in the top panel.
-- Settings modal displays:
-  - Music volume slider (`0-100%`)
-  - Sounds volume slider (`0-100%`)
-  - Music on/off toggle
-  - Sounds on/off toggle
-  - Auto-pause on/off toggle (default: off)
-  - Language selector (Russian/English)
-- Settings are preserved when restarting the game.
-- Close settings by tapping the `Settings` button again
-- Buttons use Font Awesome icons.
-- In canvas, Font Awesome buttons are rendered from local SVG assets (npm package), not via HTML icon fonts.
-- Top panel content uses horizontal safe padding equal to gameplay side padding.
+- Opened from the `Settings` button in the top panel.
+- Includes:
+  - Music volume (`0-100%`)
+  - Sounds volume (`0-100%`)
+  - Music on/off
+  - Sounds on/off
+  - Auto-pause on/off
+  - Language selector (`ru` / `en`)
+- Settings are preserved on round restart.
 
-## Localization (i18n)
-- UI strings are localized via `i18next`.
-- Default language is Russian (`ru`).
-- English fallback is available.
+## Localization
+- UI strings are localized through `i18next`.
+- Default language is Russian (`ru`) with English fallback (`en`).
 
 ## Paddle & Ball Rules
 - Left paddle color: magenta.
 - Right paddle color: cyan.
 - Ball starts white.
-- Ball bounces off top and bottom boundaries.
-- On side miss, phase changes to game over.
+- Ball bounces from top and bottom playfield boundaries.
+- Missing left/right boundary ends the round (`gameover`).
 
 ## Tetromino System
 - A tetromino can spawn after paddle hits.
-- One active tetromino falls by one cell per paddle hit.
+- Active tetromino falls by one cell per paddle-hit step.
 - Frozen tetromino blocks are stored as settled blocks.
-- Settled unsupported pieces can fall as figures by one step.
+- Unsupported settled pieces can fall as full figures by one step.
 
 ## Block Collision Rules
 - White ball matches any block color.
-- Colored ball destroys only matching-color blocks.
-- On matching hit: block is removed, ball changes to a different palette color.
-- On non-matching hit: block remains, ball reflects.
+- Colored ball destroys only same-color blocks.
+- On matching hit: block is removed and ball color changes to another palette color.
+- On non-matching hit: block remains and ball reflects.
 
 ## Bonus Shop
 - Offer duration: `10s`.
@@ -86,27 +80,29 @@ display.
 - Offer appears only if:
   - Ball stayed on one side for at least `3s`.
   - Current score is enough to buy the offer.
-- Offer is shown on the side opposite to the current ball side.
-- Offered color is never the same as the current ball color.
+- Offer appears on the side opposite to current ball side.
+- Offered color is never equal to current ball color.
 - Purchase is one tap inside the bonus widget.
 
 ## Scoring
-- Score `+1` when ball crosses from one side of the center zone to the opposite side.
-- Music pauses when the game is paused (including on tab visibility loss) and resumes from the same position when unpaused.
-- Music and sound volume are controlled independently via settings.
-- `+1` animation is shown near the ball and rendered larger than normal score text.
+- Score `+1` when ball crosses from one outer side of center zone to the opposite side.
+- `+1` animation appears near the ball and is larger than normal score text.
 - Bonus purchase shows red `-N` animation.
+- Round score resets on new round.
+- Total score is cumulative, persisted in local storage, and does not reset on defeat.
 
 ## Session Finish
-- `Finish` stores current round score and moves to finished screen.
+- `Finish` finalizes current round score and moves to finished screen.
 - Finished screen shows:
   - Round score
-  - Accumulated total score
+  - Total cumulative score
 - Tap or `Enter` starts a new round.
 
 ## Audio
-- Audio files are loaded from `public/audio` using `BASE_URL`-aware paths (works in localhost and GitHub Pages subpath deployments).
-- Music tracks play in sequence on loop.
+- Audio files are loaded from `public/audio` using `BASE_URL`-aware paths.
+- Music tracks play in sequence.
+- Music pauses during pause state (including tab focus loss) and resumes from the same position.
+- Music and sound volumes are controlled independently.
 - Sound effects are mapped to gameplay events:
   - Paddle hit
   - Wall hit
@@ -121,4 +117,4 @@ display.
 
 ## Configuration Policy
 - Gameplay constants are centralized in `src/config/gameConfig.ts`.
-- Component logic should consume config values instead of hardcoding constants.
+- Component logic consumes config values instead of hardcoded constants.

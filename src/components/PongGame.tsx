@@ -86,6 +86,7 @@ interface GameState {
   autoPauseEnabled: boolean;
   language: 'ru' | 'en';
   showSettings: boolean;
+  showStatistics: boolean;
   lastPaddleTouchAt: number;
   gameMode: GameMode;
   modeTimeMs: number;
@@ -162,6 +163,17 @@ interface SettingsLayout {
     langRu: Rect;
     langEn: Rect;
   };
+}
+
+interface StatisticsLayout {
+  modal: Rect;
+  close: Rect;
+  titleY: number;
+  rowsTop: number;
+  rowHeight: number;
+  rowGap: number;
+  labelX: number;
+  valueX: number;
 }
 
 interface TopPanelButtons {
@@ -317,38 +329,39 @@ function formatElapsedTimer(elapsedMs: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
-function showStatisticsSummary(state: GameState): void {
-  if (typeof window === 'undefined') {
-    return;
+function getSessionDurationMs(session: GameSession): number {
+  if (typeof session.duration !== 'number' || !Number.isFinite(session.duration) || session.duration < 0) {
+    return 0;
   }
+  return Math.floor(session.duration);
+}
 
-  const rounds = state.sessions.length;
-  if (rounds === 0) {
-    window.alert(`${i18n.t('statistics')}\n${i18n.t('statsNoData')}`);
-    return;
-  }
+function getStatisticsLayout(w: number, h: number): StatisticsLayout {
+  const modalWidth = Math.min(w * 0.76, 700);
+  const modalHeight = Math.min(h * 0.74, 520);
+  const modalX = (w - modalWidth) / 2;
+  const modalY = (h - modalHeight) / 2;
+  const padding = Math.max(14, modalWidth * 0.06);
+  const titleHeight = Math.max(36, modalHeight * 0.16);
+  const closeSize = Math.max(28, Math.min(42, titleHeight * 0.72));
+  const rowHeight = Math.max(28, Math.min(50, modalHeight * 0.115));
+  const rowGap = Math.max(8, modalHeight * 0.022);
 
-  const scores = state.sessions.map((session) => Math.max(0, Math.floor(session.score)));
-  const totalScore = scores.reduce((sum, score) => sum + score, 0);
-  const bestScore = Math.max(...scores);
-  const averageScore = Math.round(totalScore / rounds);
-  const durations = state.sessions.map((session) => (
-    typeof session.duration === 'number' && session.duration >= 0 ? session.duration : 0
-  ));
-  const bestDuration = Math.max(...durations);
-  const lastDuration = durations[durations.length - 1] ?? 0;
-
-  const lines = [
-    i18n.t('statistics'),
-    `${i18n.t('statsRounds')}: ${rounds}`,
-    `${i18n.t('totalScore')}: ${Math.floor(state.totalScore)}`,
-    `${i18n.t('statsBestScore')}: ${bestScore}`,
-    `${i18n.t('statsAvgScore')}: ${averageScore}`,
-    `${i18n.t('statsBestDuration')}: ${formatElapsedTimer(bestDuration)}`,
-    `${i18n.t('statsLastDuration')}: ${formatElapsedTimer(lastDuration)}`,
-  ];
-
-  window.alert(lines.join('\n'));
+  return {
+    modal: { x: modalX, y: modalY, w: modalWidth, h: modalHeight },
+    close: {
+      x: modalX + modalWidth - padding - closeSize,
+      y: modalY + Math.max(8, padding * 0.45),
+      w: closeSize,
+      h: closeSize,
+    },
+    titleY: modalY + Math.max(10, padding * 0.55),
+    rowsTop: modalY + padding + titleHeight,
+    rowHeight,
+    rowGap,
+    labelX: modalX + padding,
+    valueX: modalX + modalWidth - padding,
+  };
 }
 
 function getEndScreenButtons(width: number, height: number): { newGame: Rect; mainMenu: Rect } {
@@ -559,6 +572,26 @@ function handleSettingsInteraction(state: GameState, point: Vec2, w: number, h: 
   return true;
 }
 
+function handleStatisticsInteraction(state: GameState, point: Vec2, w: number, h: number): boolean {
+  if (!state.showStatistics) {
+    return false;
+  }
+
+  const layout = getStatisticsLayout(w, h);
+
+  if (!isPointInRect(point.x, point.y, layout.modal)) {
+    state.showStatistics = false;
+    return true;
+  }
+
+  if (isPointInRect(point.x, point.y, layout.close)) {
+    state.showStatistics = false;
+    return true;
+  }
+
+  return true;
+}
+
 function getBounds(w: number, h: number, isMobile: boolean = false): Bounds {
   const topPanelHeight = Math.max(h * GAME_CONFIG.topPanelRatio, 50);
   const sideMargin = Math.max(
@@ -669,6 +702,7 @@ function makeInitialState(
     autoPauseEnabled: prevState?.autoPauseEnabled ?? false,
     language: prevState?.language ?? 'ru',
     showSettings: false,
+    showStatistics: false,
     lastPaddleTouchAt: now,
     gameMode: prevState?.gameMode ?? 'endless',
     modeTimeMs: 0,
@@ -896,7 +930,7 @@ function getBonusWidgetRect(
   y: number;
   size: number;
 } {
-  const targetSize = canvasHeight * 0.625;
+  const targetSize = canvasHeight * 0.46875;
   const sideZoneWidth = side === 'left'
     ? grid.zoneLeft - bounds.left
     : bounds.right - grid.zoneRight;
@@ -1071,6 +1105,10 @@ function stepGame(
     return s;
   }
 
+  if (s.showStatistics) {
+    return s;
+  }
+
   if (s.phase === 'gameover' || s.phase === 'finished') {
     updatePaddles(s, keys, touch, mouse, paddleSpeed, bounds, isMobile);
     return s;
@@ -1193,13 +1231,13 @@ function stepGame(
     s.blocks = fallSettledPiecesOneStep(s.blocks);
   }
 
-  // Bonus offer lifecycle (spawn not more than once in 10s, follows current ball side)
+  // Bonus offer lifecycle (spawn not more than once in 10s, always opposite to ball side)
   const ballSide = getBallSide(s.ball.pos.x, grid.zoneLeft, grid.zoneRight);
   if (ballSide !== s.currentBallSide) {
     s.currentBallSide = ballSide;
     s.ballSideEnteredAt = now;
   }
-  const bonusSide: Side = ballSide;
+  const bonusSide: Side = ballSide === 'left' ? 'right' : 'left';
 
   if (s.bonusOffer) {
     if (now >= s.bonusOffer.expiresAt) {
@@ -1560,7 +1598,7 @@ function renderGame(
     const widget = getBonusWidgetRect(
       bounds,
       { zoneLeft: grid.zoneLeft, zoneRight: grid.zoneRight },
-      state.currentBallSide,
+      state.bonusOffer.side,
       h,
     );
     const remainingMs = Math.max(0, state.bonusOffer.expiresAt - now);
@@ -1599,8 +1637,8 @@ function renderGame(
       }
     }
 
-    const ringRadius = iconSize * 0.53;
-    const ringWidth = Math.max(4, Math.round(iconSize * 0.045));
+    const ringRadius = iconSize * 0.477;
+    const ringWidth = Math.max(4, Math.round(iconSize * 0.0405));
     ctx.beginPath();
     ctx.arc(centerX, centerY, ringRadius, 0, Math.PI * 2);
     ctx.strokeStyle = 'rgba(255,255,255,0.25)';
@@ -1613,20 +1651,38 @@ function renderGame(
     ctx.lineWidth = ringWidth;
     ctx.stroke();
 
-    const priceY = Math.max(bounds.top + 12, iconY - Math.max(12, h * 0.02));
-    const timerY = Math.min(bounds.bottom - 12, iconY + iconSize + Math.max(14, h * 0.025));
-    const priceFont = Math.max(14, Math.round(iconSize * 0.09));
-    const timerFont = Math.max(13, Math.round(iconSize * 0.08));
-
-    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    const priceText = `${state.bonusOffer.cost} ${i18n.t('bonusPoints')}`;
+    const priceFont = Math.max(16, Math.round(iconSize * 0.081));
     ctx.font = `bold ${priceFont}px monospace`;
+    const pricePaddingX = Math.max(10, Math.round(iconSize * 0.08));
+    const pricePaddingY = Math.max(6, Math.round(iconSize * 0.035));
+    const priceBadgeWidth = ctx.measureText(priceText).width + pricePaddingX * 2;
+    const priceBadgeHeight = priceFont + pricePaddingY * 2;
+    const priceCenterY = Math.max(
+      bounds.top + 8 + priceBadgeHeight / 2,
+      iconY - Math.max(12, h * 0.018),
+    );
+
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillRect(
+      centerX - priceBadgeWidth / 2,
+      priceCenterY - priceBadgeHeight / 2,
+      priceBadgeWidth,
+      priceBadgeHeight,
+    );
+    ctx.strokeStyle = 'rgba(255,215,0,0.95)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(
+      centerX - priceBadgeWidth / 2,
+      priceCenterY - priceBadgeHeight / 2,
+      priceBadgeWidth,
+      priceBadgeHeight,
+    );
+
+    ctx.fillStyle = '#FFD700';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`${state.bonusOffer.cost} ${i18n.t('bonusPoints')}`, centerX, priceY);
-
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
-    ctx.font = `bold ${timerFont}px monospace`;
-    ctx.fillText(`${i18n.t('bonusDuration')}: ${formatElapsedTimer(remainingMs)}`, centerX, timerY);
+    ctx.fillText(priceText, centerX, priceCenterY);
   }
 
   if (state.phase === 'countdown') {
@@ -1836,8 +1892,89 @@ function renderGame(
     }
   }
 
+  if (state.showStatistics) {
+    ctx.fillStyle = 'rgba(0,0,0,0.88)';
+    ctx.fillRect(0, 0, w, h);
+
+    const layout = getStatisticsLayout(w, h);
+    const { modal, close } = layout;
+    const titleFont = Math.round(Math.max(26, Math.min(50, modal.h * 0.11)));
+    const rowFont = Math.round(Math.max(16, Math.min(28, layout.rowHeight * 0.58)));
+    const valueFont = Math.round(Math.max(16, Math.min(30, layout.rowHeight * 0.64)));
+    const closeFont = Math.round(Math.max(20, Math.min(32, close.h * 0.72)));
+
+    ctx.fillStyle = '#151515';
+    ctx.fillRect(modal.x, modal.y, modal.w, modal.h);
+    ctx.strokeStyle = '#FFD700';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(modal.x, modal.y, modal.w, modal.h);
+
+    ctx.fillStyle = 'rgba(80,80,80,0.9)';
+    ctx.fillRect(close.x, close.y, close.w, close.h);
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(close.x, close.y, close.w, close.h);
+    ctx.fillStyle = 'rgba(0,0,0,0.9)';
+    ctx.font = `bold ${closeFont}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('×', close.x + close.w / 2, close.y + close.h / 2);
+
+    ctx.fillStyle = '#FFD700';
+    ctx.font = `bold ${titleFont}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(i18n.t('statistics'), w / 2, layout.titleY);
+
+    if (state.sessions.length === 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.82)';
+      ctx.font = `bold ${Math.round(Math.max(18, modal.h * 0.08))}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(i18n.t('statsNoData'), w / 2, modal.y + modal.h * 0.56);
+    } else {
+      const rounds = state.sessions.length;
+      const scores = state.sessions.map((session) => Math.max(0, Math.floor(session.score)));
+      const totalScore = Math.floor(state.totalScore);
+      const bestScore = Math.max(...scores);
+      const avgScore = Math.round(scores.reduce((sum, score) => sum + score, 0) / rounds);
+      const durations = state.sessions.map(getSessionDurationMs);
+      const bestDuration = Math.max(...durations);
+      const lastDuration = durations[durations.length - 1] ?? 0;
+
+      const rows: Array<{ label: string; value: string }> = [
+        { label: i18n.t('statsRounds'), value: String(rounds) },
+        { label: i18n.t('totalScore'), value: String(totalScore) },
+        { label: i18n.t('statsBestScore'), value: String(bestScore) },
+        { label: i18n.t('statsAvgScore'), value: String(avgScore) },
+        { label: i18n.t('statsBestDuration'), value: formatElapsedTimer(bestDuration) },
+        { label: i18n.t('statsLastDuration'), value: formatElapsedTimer(lastDuration) },
+      ];
+
+      rows.forEach((row, index) => {
+        const rowY = layout.rowsTop + index * (layout.rowHeight + layout.rowGap);
+        const rowRectY = rowY + Math.round(layout.rowHeight * 0.08);
+        const rowRectH = Math.round(layout.rowHeight * 0.84);
+
+        ctx.fillStyle = index % 2 === 0 ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.025)';
+        ctx.fillRect(modal.x + 12, rowRectY, modal.w - 24, rowRectH);
+
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.font = `bold ${rowFont}px monospace`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(row.label, layout.labelX, rowY + layout.rowHeight / 2);
+
+        ctx.fillStyle = '#FFD700';
+        ctx.font = `bold ${valueFont}px monospace`;
+        ctx.textAlign = 'right';
+        ctx.fillText(row.value, layout.valueX, rowY + layout.rowHeight / 2);
+      });
+    }
+  }
+
   // Mode selection screen
-  if (state.phase === 'mode-select' && !state.showSettings) {
+  if (state.phase === 'mode-select' && !state.showSettings && !state.showStatistics) {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);
 
@@ -2255,6 +2392,11 @@ export default function PongGame() {
       const point = getGamePoint(e.clientX, e.clientY);
       const bounds = getBounds(canvasEl.width, canvasEl.height, isTouchDeviceRef.current);
 
+      if (handleStatisticsInteraction(state, point, canvasEl.width, canvasEl.height)) {
+        e.preventDefault();
+        return;
+      }
+
       if (handleSettingsInteraction(state, point, canvasEl.width, canvasEl.height)) {
         e.preventDefault();
         return;
@@ -2310,6 +2452,7 @@ export default function PongGame() {
           point.y <= settingsBtnY + modeButtonHeight * 0.8
         ) {
           state.showSettings = true;
+          state.showStatistics = false;
           e.preventDefault();
           return;
         }
@@ -2321,7 +2464,8 @@ export default function PongGame() {
           point.y >= settingsBtnY &&
           point.y <= settingsBtnY + modeButtonHeight * 0.8
         ) {
-          showStatisticsSummary(state);
+          state.showStatistics = true;
+          state.showSettings = false;
           e.preventDefault();
           return;
         }
@@ -2356,6 +2500,9 @@ export default function PongGame() {
 
         if (isPointInCircle(point.x, point.y, buttons.settings)) {
           state.showSettings = !state.showSettings;
+          if (state.showSettings) {
+            state.showStatistics = false;
+          }
           e.preventDefault();
           return;
         }
@@ -2402,6 +2549,17 @@ export default function PongGame() {
       e.preventDefault();
       const state = stateRef.current;
       if (!state) {
+        return;
+      }
+
+      if (state.showStatistics) {
+        for (let i = 0; i < e.changedTouches.length; i += 1) {
+          const touch = e.changedTouches[i];
+          const point = getGamePoint(touch.clientX, touch.clientY);
+          if (handleStatisticsInteraction(state, point, canvasEl.width, canvasEl.height)) {
+            return;
+          }
+        }
         return;
       }
 
@@ -2461,6 +2619,7 @@ export default function PongGame() {
             point.y <= settingsBtnY + modeButtonHeight * 0.8
           ) {
             state.showSettings = true;
+            state.showStatistics = false;
             return;
           }
 
@@ -2470,7 +2629,8 @@ export default function PongGame() {
             point.y >= settingsBtnY &&
             point.y <= settingsBtnY + modeButtonHeight * 0.8
           ) {
-            showStatisticsSummary(state);
+            state.showStatistics = true;
+            state.showSettings = false;
             return;
           }
         }
@@ -2538,7 +2698,7 @@ export default function PongGame() {
           const rect = getBonusWidgetRect(
             bounds,
             { zoneLeft: grid.zoneLeft, zoneRight: grid.zoneRight },
-            state.currentBallSide,
+            state.bonusOffer.side,
             canvasEl.height,
           );
           const insideWidget = point.x >= rect.x

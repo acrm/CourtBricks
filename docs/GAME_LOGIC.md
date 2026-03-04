@@ -45,7 +45,7 @@
 ## Main Menu (Mode Select)
 - The mode-select screen includes four mode buttons and two utility buttons: `Settings` and `Statistics`.
 - Both utility buttons are interactive on desktop and mobile.
-- `Statistics` opens a compact summary dialog with rounds count, total/best/average score, and duration metrics.
+- `Statistics` opens an in-canvas modal window with rounds count, total/best/average score, and duration metrics.
 
 ## Settings
 - Opened from the `Settings` button in the top panel.
@@ -90,12 +90,12 @@
 - Offer appears only if:
   - Ball stayed on one side for at least `5s`.
   - Current score is enough to buy the offer.
-- Offer appears in the current ball side outer zone (left or right), not in the center Tetris zone.
+- Offer appears in the outer zone opposite to the current ball side.
 - Offered color is never equal to current ball color.
-- Bonus icon is enlarged by `25%` compared to the previous version.
+- Bonus icon size is reduced by `25%` from the previous enlarged state.
 - Bonus offer UI shows:
-  - Cost label
-  - Radial expiration timer with remaining-time label
+  - Cost label with stronger visual emphasis
+  - Radial expiration ring only (decreasing from full `360°` to `0°`, without textual timer)
 - Purchase is one tap inside the bonus widget.
 
 ## Scoring

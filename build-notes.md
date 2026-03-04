@@ -40,3 +40,5 @@
 - 2026w10-18.5 — Add mode-select screen touch event handling for mobile devices
 - 2026w10-18.6 — Fix mode-select button interactions on mobile and update bonus offer placement with timer labels
 - 2026w10-19.1 — Finalize bonus offer side-zone rendering, statistics button action, and mobile settings hint cleanup
+- 2026w10-19.2 — Replace stats alert with in-canvas modal and refine bonus offer ring and price rendering
+- 2026w10-20.1 — Finalize statistics modal UX and bonus offer opposite-side placement with visual scale tuning

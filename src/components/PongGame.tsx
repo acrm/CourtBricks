@@ -5,7 +5,7 @@ interface Vec2 { x: number; y: number }
 interface Ball { pos: Vec2; vel: Vec2; radius: number; color: string }
 interface Paddle { y: number; dy: number; height: number }
 interface Block { x: number; y: number; color: string }
-interface ActiveTetromino { blocks: Block[]; lastFallTime: number }
+interface ActiveTetromino { blocks: Block[]; paddleHitsSinceLastFall: number }
 
 const TETROMINO_SHAPES: ReadonlyArray<ReadonlyArray<Vec2>> = [
   [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }],
@@ -60,25 +60,22 @@ interface Bounds {
   width: number;
   height: number;
   topPanelHeight: number;
-  bottomPanelHeight: number;
-  sidePanelWidth: number;
+  sideMargin: number;
 }
 
 function getBounds(w: number, h: number): Bounds {
-  const topPanelHeight = Math.max(h * GAME_CONFIG.minTopBottomPanelRatio, 60);
-  const bottomPanelHeight = Math.max(h * GAME_CONFIG.minTopBottomPanelRatio, 60);
-  const sidePanelWidth = Math.max(w * GAME_CONFIG.minSidePanelRatio, 80);
+  const topPanelHeight = Math.max(h * GAME_CONFIG.topPanelRatio, 50);
+  const sideMargin = Math.max(w * GAME_CONFIG.sideMarginRatio, 40);
 
   return {
-    left: sidePanelWidth,
-    right: w - sidePanelWidth,
+    left: sideMargin,
+    right: w - sideMargin,
     top: topPanelHeight,
-    bottom: h - bottomPanelHeight,
-    width: w - sidePanelWidth * 2,
-    height: h - topPanelHeight - bottomPanelHeight,
+    bottom: h,
+    width: w - sideMargin * 2,
+    height: h - topPanelHeight,
     topPanelHeight,
-    bottomPanelHeight,
-    sidePanelWidth,
+    sideMargin,
   };
 }
 
@@ -221,6 +218,7 @@ function updatePaddles(
   }
 
   if (touch.left !== null) {
+    // Invert Y for real mobile devices (portrait mode rotation causes inversion)
     const targetY = touch.left - state.leftPaddle.height / 2;
     const diff = targetY - state.leftPaddle.y;
     state.leftPaddle.dy = Math.sign(diff) * Math.min(Math.abs(diff), paddleSpeed * 4);
@@ -233,6 +231,7 @@ function updatePaddles(
   }
 
   if (touch.right !== null) {
+    // Invert Y for real mobile devices (portrait mode rotation causes inversion)
     const targetY = touch.right - state.rightPaddle.height / 2;
     const diff = targetY - state.rightPaddle.y;
     state.rightPaddle.dy = Math.sign(diff) * Math.min(Math.abs(diff), paddleSpeed * 4);
@@ -280,7 +279,7 @@ function stepGame(
     rightPaddle: { ...state.rightPaddle },
     blocks: state.blocks.map((block) => ({ ...block })),
     activeTetromino: state.activeTetromino
-      ? { blocks: state.activeTetromino.blocks.map((b) => ({ ...b })), lastFallTime: state.activeTetromino.lastFallTime }
+      ? { blocks: state.activeTetromino.blocks.map((b) => ({ ...b })), paddleHitsSinceLastFall: state.activeTetromino.paddleHitsSinceLastFall }
       : null,
     ballTrail: [...state.ballTrail],
   };
@@ -378,20 +377,15 @@ function stepGame(
     if (!s.activeTetromino) {
       const newBlocks = spawnTetromino(s.blocks);
       if (newBlocks.length > 0) {
-        s.activeTetromino = { blocks: newBlocks, lastFallTime: Date.now() };
+        s.activeTetromino = { blocks: newBlocks, paddleHitsSinceLastFall: 0 };
       }
-    }
-  }
-
-  // Update active tetromino (gravity)
-  if (s.activeTetromino) {
-    const now = Date.now();
-    const elapsed = now - s.activeTetromino.lastFallTime;
-    
-    if (elapsed >= GAME_CONFIG.tetrisBlockFallInterval) {
+    } else {
+      // Move tetromino down by one cell on every paddle hit
+      s.activeTetromino.paddleHitsSinceLastFall += 1;
+      
       if (canTetrominoMoveDown(s.activeTetromino.blocks, s.blocks)) {
         s.activeTetromino.blocks = moveTetrominoDown(s.activeTetromino.blocks);
-        s.activeTetromino.lastFallTime = now;
+        s.activeTetromino.paddleHitsSinceLastFall = 0;
       } else {
         // Freeze tetromino: add to blocks
         s.blocks.push(...s.activeTetromino.blocks);
@@ -400,7 +394,7 @@ function stepGame(
         // Try to spawn new one
         const newBlocks = spawnTetromino(s.blocks);
         if (newBlocks.length > 0) {
-          s.activeTetromino = { blocks: newBlocks, lastFallTime: Date.now() };
+          s.activeTetromino = { blocks: newBlocks, paddleHitsSinceLastFall: 0 };
         }
       }
     }
@@ -432,10 +426,23 @@ function stepGame(
       return;
     }
 
+    // Reflect ball and push it away from block to prevent sticking
     if (Math.abs(dx) > Math.abs(dy)) {
       s.ball.vel.x = -s.ball.vel.x;
+      // Push ball out horizontally
+      if (dx > 0) {
+        s.ball.pos.x = blockX + grid.blockWidth + s.ball.radius;
+      } else {
+        s.ball.pos.x = blockX - s.ball.radius;
+      }
     } else {
       s.ball.vel.y = -s.ball.vel.y;
+      // Push ball out vertically
+      if (dy > 0) {
+        s.ball.pos.y = blockY + grid.blockHeight + s.ball.radius;
+      } else {
+        s.ball.pos.y = blockY - s.ball.radius;
+      }
     }
   });
 
@@ -493,36 +500,19 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
   ctx.lineWidth = 1;
   ctx.strokeRect(0, bounds.topPanelHeight - 1, w, 1);
 
-  // Bottom panel
-  ctx.fillStyle = GAME_CONFIG.panelBackgroundColor;
-  ctx.fillRect(0, h - bounds.bottomPanelHeight, w, bounds.bottomPanelHeight);
-  ctx.strokeStyle = GAME_CONFIG.panelBorderColor;
-  ctx.lineWidth = 1;
-  ctx.strokeRect(0, h - bounds.bottomPanelHeight, w, 1);
-
-  // Side panels
-  ctx.fillStyle = GAME_CONFIG.panelBackgroundColor;
-  ctx.fillRect(0, bounds.topPanelHeight, bounds.sidePanelWidth, bounds.height);
-  ctx.fillRect(w - bounds.sidePanelWidth, bounds.topPanelHeight, bounds.sidePanelWidth, bounds.height);
-
-  ctx.strokeStyle = GAME_CONFIG.panelBorderColor;
-  ctx.lineWidth = 1;
-  ctx.strokeRect(bounds.sidePanelWidth - 1, bounds.topPanelHeight, 1, bounds.height);
-  ctx.strokeRect(w - bounds.sidePanelWidth, bounds.topPanelHeight, 1, bounds.height);
-
-  // Score in top panel
+  // Score in top panel (left side)
   const scoreFontSize = Math.round(bounds.topPanelHeight * 0.5);
   ctx.font = `bold ${scoreFontSize}px monospace`;
   ctx.fillStyle = 'rgba(255,255,255,0.9)';
-  ctx.textAlign = 'center';
+  ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(`SCORE: ${state.score}`, w / 2, bounds.topPanelHeight / 2);
+  ctx.fillText(`SCORE: ${state.score}`, 20, bounds.topPanelHeight / 2);
 
-  // Settings button stub in bottom panel
-  const buttonWidth = 120;
-  const buttonHeight = bounds.bottomPanelHeight * 0.6;
-  const buttonX = w - bounds.sidePanelWidth - buttonWidth - 20;
-  const buttonY = h - bounds.bottomPanelHeight / 2 - buttonHeight / 2;
+  // Settings button in top panel (right side)
+  const buttonWidth = 100;
+  const buttonHeight = bounds.topPanelHeight * 0.6;
+  const buttonX = w - buttonWidth - 20;
+  const buttonY = bounds.topPanelHeight / 2 - buttonHeight / 2;
 
   ctx.fillStyle = 'rgba(100,100,100,0.4)';
   ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
@@ -681,6 +671,18 @@ export default function PongGame() {
       canvasEl.height = dims.height;
       setPortraitMode(dims.portrait);
       stateRef.current = makeInitialState(canvasEl.width, canvasEl.height);
+
+      // Request fullscreen on mobile devices
+      if ('ontouchstart' in window && document.documentElement.requestFullscreen) {
+        const requestFS = () => {
+          document.documentElement.requestFullscreen().catch(() => {
+            // Fullscreen request failed, ignore
+          });
+          // Remove listener after first attempt
+          canvasEl.removeEventListener('touchstart', requestFS);
+        };
+        canvasEl.addEventListener('touchstart', requestFS, { once: true });
+      }
     };
 
     init();
@@ -713,8 +715,10 @@ export default function PongGame() {
       if (!portraitMode) {
         return clientY - rect.top;
       }
+      // In portrait mode (canvas rotated 90deg), physical X becomes game Y
+      // Invert for real mobile devices: canvas height - xInElement
       const xInElement = clientX - rect.left;
-      return xInElement;
+      return rect.width - xInElement;
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {

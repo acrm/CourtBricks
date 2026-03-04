@@ -4,8 +4,8 @@ import { GAME_CONFIG } from '../config/gameConfig';
 interface Vec2 { x: number; y: number }
 interface Ball { pos: Vec2; vel: Vec2; radius: number; color: string }
 interface Paddle { y: number; dy: number; height: number }
-interface Block { x: number; y: number; color: string }
-interface ActiveTetromino { blocks: Block[]; paddleHitsSinceLastFall: number }
+interface Block { x: number; y: number; color: string; pieceId: number }
+interface ActiveTetromino { id: number; blocks: Block[]; paddleHitsSinceLastFall: number }
 
 const TETROMINO_SHAPES: ReadonlyArray<ReadonlyArray<Vec2>> = [
   [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }],
@@ -19,6 +19,17 @@ const TETROMINO_SHAPES: ReadonlyArray<ReadonlyArray<Vec2>> = [
 
 type Side = 'left' | 'right';
 type Phase = 'countdown' | 'playing' | 'gameover';
+type BonusKind = 'palette-color' | 'white-color';
+
+interface BonusOffer {
+  kind: BonusKind;
+  color: string;
+  cost: number;
+  effectDurationMs: number;
+  side: Side;
+  spawnedAt: number;
+  expiresAt: number;
+}
 
 interface GameState {
   ball: Ball;
@@ -33,6 +44,9 @@ interface GameState {
   score: number;
   lastOuterSide: Side | null;
   ballTrail: Vec2[];
+  nextPieceId: number;
+  bonusOffer: BonusOffer | null;
+  lastBonusSpawnAt: number;
 }
 
 interface Keys {
@@ -121,6 +135,9 @@ function makeInitialState(w: number, h: number): GameState {
     score: 0,
     lastOuterSide: null,
     ballTrail: [],
+    nextPieceId: 1,
+    bonusOffer: null,
+    lastBonusSpawnAt: 0,
   };
 }
 
@@ -143,7 +160,7 @@ function getGridDimensions(w: number, h: number): {
   return { blockSize, blockWidth, blockHeight, zoneLeft, zoneRight, zoneWidth };
 }
 
-function spawnTetromino(blocks: Block[]): Block[] {
+function spawnTetromino(blocks: Block[], pieceId: number): Block[] {
   const shape = TETROMINO_SHAPES[Math.floor(Math.random() * TETROMINO_SHAPES.length)];
   const color = getRandomBlockColor();
 
@@ -177,10 +194,107 @@ function spawnTetromino(blocks: Block[]): Block[] {
       continue;
     }
 
-    return cells.map((cell) => ({ ...cell, color }));
+    return cells.map((cell) => ({ ...cell, color, pieceId }));
   }
 
   return [];
+}
+
+function getBallSide(ballX: number, zoneLeft: number, zoneRight: number): Side {
+  if (ballX < zoneLeft) {
+    return 'left';
+  }
+  if (ballX > zoneRight) {
+    return 'right';
+  }
+  return ballX < (zoneLeft + zoneRight) / 2 ? 'left' : 'right';
+}
+
+function canPieceMoveDown(pieceBlocks: Block[], allBlocks: Block[]): boolean {
+  return pieceBlocks.every((cell) => {
+    const nextY = cell.y + 1;
+    if (nextY >= GAME_CONFIG.tetrisGridRows) {
+      return false;
+    }
+
+    return !allBlocks.some(
+      (block) => block.pieceId !== cell.pieceId && block.x === cell.x && block.y === nextY,
+    );
+  });
+}
+
+function fallSettledPiecesOneStep(blocks: Block[]): Block[] {
+  if (blocks.length === 0) {
+    return blocks;
+  }
+
+  const byPiece = new Map<number, Block[]>();
+  blocks.forEach((block) => {
+    if (!byPiece.has(block.pieceId)) {
+      byPiece.set(block.pieceId, []);
+    }
+    byPiece.get(block.pieceId)?.push(block);
+  });
+
+  const movablePieceIds = new Set<number>();
+  byPiece.forEach((pieceBlocks, pieceId) => {
+    if (canPieceMoveDown(pieceBlocks, blocks)) {
+      movablePieceIds.add(pieceId);
+    }
+  });
+
+  if (movablePieceIds.size === 0) {
+    return blocks;
+  }
+
+  return blocks.map((block) => (
+    movablePieceIds.has(block.pieceId)
+      ? { ...block, y: block.y + 1 }
+      : block
+  ));
+}
+
+function getRandomBonusOffer(side: Side, now: number): BonusOffer {
+  const options: BonusOffer[] = [
+    {
+      kind: 'palette-color',
+      color: getRandomBlockColor(),
+      cost: GAME_CONFIG.bonusColorCost,
+      effectDurationMs: 0,
+      side,
+      spawnedAt: now,
+      expiresAt: now + GAME_CONFIG.bonusOfferLifetimeMs,
+    },
+    {
+      kind: 'white-color',
+      color: GAME_CONFIG.ballWhiteColor,
+      cost: GAME_CONFIG.bonusWhiteCost,
+      effectDurationMs: 0,
+      side,
+      spawnedAt: now,
+      expiresAt: now + GAME_CONFIG.bonusOfferLifetimeMs,
+    },
+  ];
+
+  return options[Math.floor(Math.random() * options.length)];
+}
+
+function getBonusWidgetRect(bounds: Bounds, offerSide: Side, canvasWidth: number, canvasHeight: number): {
+  x: number;
+  y: number;
+  size: number;
+} {
+  const size = canvasHeight * GAME_CONFIG.bonusWidgetSizeRatio;
+  const y = bounds.top + (bounds.height - size) / 2;
+  const sideCenterX = offerSide === 'left'
+    ? bounds.left / 2
+    : bounds.right + (canvasWidth - bounds.right) / 2;
+
+  return {
+    x: sideCenterX - size / 2,
+    y,
+    size,
+  };
 }
 
 function canTetrominoMoveDown(tetromino: Block[], blocks: Block[]): boolean {
@@ -272,6 +386,7 @@ function stepGame(
   touch: TouchControls,
   mouse: MouseControls,
 ): GameState {
+  const now = performance.now();
   const s: GameState = {
     ...state,
     ball: { ...state.ball, pos: { ...state.ball.pos }, vel: { ...state.ball.vel } },
@@ -279,7 +394,11 @@ function stepGame(
     rightPaddle: { ...state.rightPaddle },
     blocks: state.blocks.map((block) => ({ ...block })),
     activeTetromino: state.activeTetromino
-      ? { blocks: state.activeTetromino.blocks.map((b) => ({ ...b })), paddleHitsSinceLastFall: state.activeTetromino.paddleHitsSinceLastFall }
+      ? {
+        id: state.activeTetromino.id,
+        blocks: state.activeTetromino.blocks.map((b) => ({ ...b })),
+        paddleHitsSinceLastFall: state.activeTetromino.paddleHitsSinceLastFall,
+      }
       : null,
     ballTrail: [...state.ballTrail],
   };
@@ -375,9 +494,10 @@ function stepGame(
 
     // Try to spawn tetromino if none exists
     if (!s.activeTetromino) {
-      const newBlocks = spawnTetromino(s.blocks);
+      const newBlocks = spawnTetromino(s.blocks, s.nextPieceId);
       if (newBlocks.length > 0) {
-        s.activeTetromino = { blocks: newBlocks, paddleHitsSinceLastFall: 0 };
+        s.activeTetromino = { id: s.nextPieceId, blocks: newBlocks, paddleHitsSinceLastFall: 0 };
+        s.nextPieceId += 1;
       }
     } else {
       // Move tetromino down by one cell on every paddle hit
@@ -392,18 +512,45 @@ function stepGame(
         s.activeTetromino = null;
 
         // Try to spawn new one
-        const newBlocks = spawnTetromino(s.blocks);
+        const newBlocks = spawnTetromino(s.blocks, s.nextPieceId);
         if (newBlocks.length > 0) {
-          s.activeTetromino = { blocks: newBlocks, paddleHitsSinceLastFall: 0 };
+          s.activeTetromino = { id: s.nextPieceId, blocks: newBlocks, paddleHitsSinceLastFall: 0 };
+          s.nextPieceId += 1;
         }
       }
     }
+
+    // Settled pieces can fall as complete figures, one cell per step
+    s.blocks = fallSettledPiecesOneStep(s.blocks);
+  }
+
+  // Bonus offer lifecycle (spawn not more than once in 10s, always opposite to ball side)
+  const ballSide = getBallSide(s.ball.pos.x, grid.zoneLeft, grid.zoneRight);
+  const bonusSide: Side = ballSide === 'left' ? 'right' : 'left';
+
+  if (s.bonusOffer) {
+    if (now >= s.bonusOffer.expiresAt) {
+      s.bonusOffer = null;
+      s.lastBonusSpawnAt = now;
+    } else if (s.bonusOffer.side !== bonusSide) {
+      s.bonusOffer = { ...s.bonusOffer, side: bonusSide };
+    }
+  }
+
+  if (!s.bonusOffer && now - s.lastBonusSpawnAt >= GAME_CONFIG.bonusOfferIntervalMs) {
+    s.bonusOffer = getRandomBonusOffer(bonusSide, now);
+    s.lastBonusSpawnAt = now;
   }
 
   const removed = new Set<number>();
   const allBlocks = s.activeTetromino ? [...s.blocks, ...s.activeTetromino.blocks] : s.blocks;
+  let collidedThisFrame = false;
 
   allBlocks.forEach((block, index) => {
+    if (collidedThisFrame) {
+      return;
+    }
+
     const blockX = grid.zoneLeft + block.x * grid.blockWidth;
     const blockY = bounds.top + block.y * grid.blockHeight;
 
@@ -423,6 +570,7 @@ function stepGame(
     if (match) {
       removed.add(index);
       s.ball.color = getRandomDifferentColor(s.ball.color);
+      collidedThisFrame = true;
       return;
     }
 
@@ -444,6 +592,8 @@ function stepGame(
         s.ball.pos.y = blockY - s.ball.radius;
       }
     }
+
+    collidedThisFrame = true;
   });
 
   // Process removed blocks
@@ -486,6 +636,7 @@ function stepGame(
 
 function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
   const { width: w, height: h } = ctx.canvas;
+  const now = performance.now();
   const bounds = getBounds(w, h);
   const grid = getGridDimensions(w, h);
 
@@ -574,7 +725,7 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
   for (let i = 0; i < state.ballTrail.length; i += 1) {
     const trailPos = state.ballTrail[i];
     const t = i / Math.max(1, state.ballTrail.length - 1);
-    const opacity = GAME_CONFIG.ballTrailOpacityStart + t * (GAME_CONFIG.ballTrailOpacityEnd - GAME_CONFIG.ballTrailOpacityStart);
+    const opacity = GAME_CONFIG.ballTrailOpacityEnd + t * (GAME_CONFIG.ballTrailOpacityStart - GAME_CONFIG.ballTrailOpacityEnd);
     const radius = state.ball.radius * (0.5 + t * 0.5);
 
     ctx.beginPath();
@@ -598,6 +749,41 @@ function renderGame(ctx: CanvasRenderingContext2D, state: GameState): void {
   ctx.arc(state.ball.pos.x, state.ball.pos.y, state.ball.radius, 0, Math.PI * 2);
   ctx.fillStyle = state.ball.color;
   ctx.fill();
+
+  if (state.bonusOffer && state.phase === 'playing') {
+    const widget = getBonusWidgetRect(bounds, state.bonusOffer.side, w, h);
+    const remaining = Math.max(0, state.bonusOffer.expiresAt - now);
+    const ratio = remaining / GAME_CONFIG.bonusOfferLifetimeMs;
+    const centerX = widget.x + widget.size / 2;
+    const centerY = widget.y + widget.size / 2;
+
+    ctx.fillStyle = 'rgba(20,20,20,0.75)';
+    ctx.fillRect(widget.x, widget.y, widget.size, widget.size);
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(widget.x, widget.y, widget.size, widget.size);
+
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, widget.size * 0.49, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio);
+    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+    ctx.lineWidth = 6;
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    ctx.font = `bold ${Math.round(widget.size * 0.28)}px monospace`;
+    ctx.fillStyle = state.bonusOffer.color;
+    ctx.fillText(state.bonusOffer.kind === 'white-color' ? 'W' : '●', centerX, centerY - widget.size * 0.2);
+
+    ctx.font = `bold ${Math.round(widget.size * 0.12)}px monospace`;
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillText(`${state.bonusOffer.cost} pts`, centerX, centerY + widget.size * 0.08);
+
+    ctx.font = `${Math.round(widget.size * 0.1)}px monospace`;
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText('dur: 0s', centerX, centerY + widget.size * 0.25);
+  }
 
   if (state.phase === 'countdown') {
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
@@ -710,15 +896,24 @@ export default function PongGame() {
       rafRef.current = requestAnimationFrame(loop);
     }
 
-    const getGameY = (clientX: number, clientY: number): number => {
+    const getGamePoint = (clientX: number, clientY: number): Vec2 => {
       const rect = canvasEl.getBoundingClientRect();
       if (!portraitMode) {
-        return clientY - rect.top;
+        return { x: clientX - rect.left, y: clientY - rect.top };
       }
-      // In portrait mode (canvas rotated 90deg), physical X becomes game Y
-      // Invert for real mobile devices: canvas height - xInElement
+
       const xInElement = clientX - rect.left;
-      return rect.width - xInElement;
+      const yInElement = clientY - rect.top;
+
+      return {
+        x: yInElement,
+        y: rect.width - xInElement,
+      };
+    };
+
+    const getGameY = (clientX: number, clientY: number): number => {
+      const point = getGamePoint(clientX, clientY);
+      return point.y;
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -809,10 +1004,32 @@ export default function PongGame() {
 
       for (let i = 0; i < e.changedTouches.length; i += 1) {
         const touch = e.changedTouches[i];
-        const side: Side = touch.clientX < window.innerWidth / 2 ? 'left' : 'right';
+        const state = stateRef.current;
+        const point = getGamePoint(touch.clientX, touch.clientY);
+
+        if (state?.phase === 'playing' && state.bonusOffer) {
+          const bounds = getBounds(canvasEl.width, canvasEl.height);
+          const rect = getBonusWidgetRect(bounds, state.bonusOffer.side, canvasEl.width, canvasEl.height);
+          const insideWidget = point.x >= rect.x
+            && point.x <= rect.x + rect.size
+            && point.y >= rect.y
+            && point.y <= rect.y + rect.size;
+
+          if (insideWidget) {
+            if (state.score >= state.bonusOffer.cost) {
+              state.score -= state.bonusOffer.cost;
+              state.ball.color = state.bonusOffer.color;
+              state.bonusOffer = null;
+              state.lastBonusSpawnAt = performance.now();
+            }
+            continue;
+          }
+        }
+
+        const side: Side = point.x < canvasEl.width / 2 ? 'left' : 'right';
         activeTouchesRef.current.set(touch.identifier, side);
 
-        const y = getGameY(touch.clientX, touch.clientY);
+        const y = point.y;
         if (side === 'left') {
           touchRef.current.left = y;
         } else {

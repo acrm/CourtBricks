@@ -10,3 +10,5 @@
 - 2026w10-3.1 — Keep score visible until restart and refine tetris rules
 - 2026w10-4.1 — Add panels with score/settings, tetris gravity, ball trail
 - 2026w10-5.1 — Mobile fullscreen, 5x10 tetris, paddle-based fall, fixed collisions
+- 2026w10-5.2 — Add bonus shop and cascading piece fall
+- 2026w10-6.1 — Implement bonus widget and improved block physics

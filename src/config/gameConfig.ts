@@ -36,6 +36,13 @@ export const GAME_CONFIG = {
   ballTrailLength: 20,
   ballTrailOpacityStart: 0.3,
   ballTrailOpacityEnd: 0.01,
+
+  // Bonus shop configuration
+  bonusOfferIntervalMs: 10000,
+  bonusOfferLifetimeMs: 5000,
+  bonusWidgetSizeRatio: 0.33,
+  bonusColorCost: 3,
+  bonusWhiteCost: 5,
 };
 
 export type GameConfig = typeof GAME_CONFIG;

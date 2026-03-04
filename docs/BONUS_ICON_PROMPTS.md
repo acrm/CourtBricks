@@ -34,19 +34,19 @@ This document maps icon prompts to the **currently implemented bonuses** in the 
 Use one base composition and swap only the glow/core color.
 
 ### A1. `palette-color` -> Red (`#FF1744`)
-"Arcade bonus icon in 1980s synthwave style: glossy spherical energy core with chrome ring frame, strong neon bloom and smooth airbrush highlights, dominant emissive color #FF1744, transparent background, centered, high contrast, no text, no pixelation."
+"Arcade bonus icon in 1980s synthwave style: glossy spherical ball in color #FF1744 with curved arrow pointing toward it, chrome ring frame, strong neon bloom and smooth airbrush highlights, arrow suggests 'change to this color', transparent background, centered, high contrast, no text, no pixelation."
 
 ### A2. `palette-color` -> Orange (`#F57C00`)
-"Arcade bonus icon in 1980s synthwave style: glossy spherical energy core with chrome ring frame, strong neon bloom and smooth airbrush highlights, dominant emissive color #F57C00, transparent background, centered, high contrast, no text, no pixelation."
+"Arcade bonus icon in 1980s synthwave style: glossy spherical ball in color #F57C00 with curved arrow pointing toward it, chrome ring frame, strong neon bloom and smooth airbrush highlights, arrow suggests 'change to this color', transparent background, centered, high contrast, no text, no pixelation."
 
 ### A3. `palette-color` -> Yellow (`#FBC02D`)
-"Arcade bonus icon in 1980s synthwave style: glossy spherical energy core with chrome ring frame, strong neon bloom and smooth airbrush highlights, dominant emissive color #FBC02D, transparent background, centered, high contrast, no text, no pixelation."
+"Arcade bonus icon in 1980s synthwave style: glossy spherical ball in color #FBC02D with curved arrow pointing toward it, chrome ring frame, strong neon bloom and smooth airbrush highlights, arrow suggests 'change to this color', transparent background, centered, high contrast, no text, no pixelation."
 
 ### A4. `palette-color` -> Green (`#388E3C`)
-"Arcade bonus icon in 1980s synthwave style: glossy spherical energy core with chrome ring frame, strong neon bloom and smooth airbrush highlights, dominant emissive color #388E3C, transparent background, centered, high contrast, no text, no pixelation."
+"Arcade bonus icon in 1980s synthwave style: glossy spherical ball in color #388E3C with curved arrow pointing toward it, chrome ring frame, strong neon bloom and smooth airbrush highlights, arrow suggests 'change to this color', transparent background, centered, high contrast, no text, no pixelation."
 
 ### A5. `palette-color` -> Blue (`#0277BD`)
-"Arcade bonus icon in 1980s synthwave style: glossy spherical energy core with chrome ring frame, strong neon bloom and smooth airbrush highlights, dominant emissive color #0277BD, transparent background, centered, high contrast, no text, no pixelation."
+"Arcade bonus icon in 1980s synthwave style: glossy spherical ball in color #0277BD with curved arrow pointing toward it, chrome ring frame, strong neon bloom and smooth airbrush highlights, arrow suggests 'change to this color', transparent background, centered, high contrast, no text, no pixelation."
 
 ## B. Icon for `white-color`
 ### B1. `white-color` -> White (`#FFFFFF`)

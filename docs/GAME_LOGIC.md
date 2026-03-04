@@ -10,6 +10,7 @@
 - The layout includes a top panel and side margins; there is no bottom panel.
 - Side margin is never smaller than one paddle width.
 - Distance from each paddle to the corresponding screen edge is at least one paddle width.
+- On mobile devices, there is an additional bottom margin of `60px` to prevent touch detection issues at the screen edge.
 
 ## Core Layout
 - The field has three zones:
@@ -22,19 +23,35 @@
 - Left paddle: `Q` up, `A` down.
 - Right paddle: `]` up, `'` down.
 - Touch paddle control: touch must start on the paddle body with `+50%` vertical tolerance.
+- On mobile devices: moving one paddle automatically synchronizes the other paddle to the same position.
 - Debug purchase: `Space` buys the currently visible bonus offer.
 - Mouse debug mode: hold left mouse button and move vertically to move both paddles together.
 - For desktop non-mobile debugging, pressed left mouse button is treated as tap-like active input for pause logic.
 
-## Mobile Pause Behavior
-- On mobile/touch devices, if there is no active paddle touch for more than `0.1s`, gameplay pauses automatically.
-- Pause is exited by tap.
-- On resume, countdown runs again before gameplay is unfrozen.
+## Pause Behavior
+- When the browser tab loses focus (visibility change), the game automatically pauses.
+- On mobile/touch devices with auto-pause enabled in settings: if there is no active paddle touch for more than `0.1s`, gameplay pauses automatically.
+- Auto-pause is disabled by default; it can be enabled in settings.
+- Pause is exited by tap or mouse click.
+- On resume, countdown runs again (`500ms` per tick, 2x faster than original `1000ms`) before gameplay is unfrozen.
+display.
+- Right side (from left to right): round `Finish` button (only during gameplay), `Music`, `Sounds`, and `Settings` buttons.
+- Buttons use Font Awesome icons.
+- Buttons are clickable on both desktop and mobile.
+- In canvas, Font Awesome buttons are rendered from local SVG assets (npm package), not via HTML icon fonts.
+- Top panel content uses horizontal safe padding equal to gameplay side padding.
 
-## Top Panel UI
-- Top panel color is gold.
-- Left side: score and round `Finish` button.
-- Right side: round `Music`, `Sounds`, and `Settings` buttons.
+## Settings
+- Accessible via the `Settings` button in the top panel.
+- Settings modal displays:
+  - Music volume slider (`0-100%`)
+  - Sounds volume slider (`0-100%`)
+  - Music on/off toggle
+  - Sounds on/off toggle
+  - Auto-pause on/off toggle (default: off)
+  - Language selector (Russian/English)
+- Settings are preserved when restarting the game.
+- Close settings by tapping the `Settings` button again
 - Buttons use Font Awesome icons.
 - In canvas, Font Awesome buttons are rendered from local SVG assets (npm package), not via HTML icon fonts.
 - Top panel content uses horizontal safe padding equal to gameplay side padding.
@@ -75,6 +92,8 @@
 
 ## Scoring
 - Score `+1` when ball crosses from one side of the center zone to the opposite side.
+- Music pauses when the game is paused (including on tab visibility loss) and resumes from the same position when unpaused.
+- Music and sound volume are controlled independently via settings.
 - `+1` animation is shown near the ball and rendered larger than normal score text.
 - Bonus purchase shows red `-N` animation.
 

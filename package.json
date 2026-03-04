@@ -1,7 +1,7 @@
 {
   "name": "courtbricks",
   "private": true,
-  "version": "2026w10-12.1",
+  "version": "2026w10-13.1",
   "type": "module",
   "scripts": {
     "dev": "vite",

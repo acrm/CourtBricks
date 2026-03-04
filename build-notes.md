@@ -23,3 +23,4 @@
 - 2026w10-11.1 — Fix mobile safe margins for paddles and top-panel UI content
 - 2026w10-11.2 — Treat LMB as tap-like input for debug pause and switch canvas icons to Font Awesome SVG
 - 2026w10-12.1 — Align bonus icon prompts to implemented bonuses and synthwave non-pixel style
+- 2026w10-13.1 — Added settings modal, pause on visibility loss, music pause/resume, 2x faster countdown, mobile paddle sync, bottom margin for mobile, finish button repositioned, desktop button clicks, bonus icon prompts with curved arrow

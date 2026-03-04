@@ -73,6 +73,11 @@ interface GameState {
   sessionScore: number;
   musicEnabled: boolean;
   soundsEnabled: boolean;
+  musicVolume: number;
+  soundsVolume: number;
+  autoPauseEnabled: boolean;
+  language: 'ru' | 'en';
+  showSettings: boolean;
   lastPaddleTouchAt: number;
 }
 
@@ -142,10 +147,13 @@ function getTopPanelButtons(
   const soundsCx = settingsCx - (radius * 2 + gap);
   const musicCx = soundsCx - (radius * 2 + gap);
 
-  const finishCx = panelPadding + radius + Math.max(120, radius * 2.9);
+  let finishCx = null;
+  if (phase === 'playing') {
+    finishCx = musicCx - (radius * 2 + gap);
+  }
 
   return {
-    finish: phase === 'playing'
+    finish: finishCx !== null
       ? { cx: finishCx, cy, r: radius }
       : null,
     music: { cx: musicCx, cy, r: radius },
@@ -160,20 +168,21 @@ function isPointInCircle(x: number, y: number, button: CircularButton): boolean 
   return dx * dx + dy * dy <= button.r * button.r;
 }
 
-function getBounds(w: number, h: number): Bounds {
+function getBounds(w: number, h: number, isMobile: boolean = false): Bounds {
   const topPanelHeight = Math.max(h * GAME_CONFIG.topPanelRatio, 50);
   const sideMargin = Math.max(
     w * GAME_CONFIG.sideMarginRatio,
     GAME_CONFIG.paddleWidth,
   );
+  const bottomMargin = isMobile ? GAME_CONFIG.mobileBottomMargin : 0;
 
   return {
     left: sideMargin,
     right: w - sideMargin,
     top: topPanelHeight,
-    bottom: h,
+    bottom: h - bottomMargin,
     width: w - sideMargin * 2,
-    height: h - topPanelHeight,
+    height: h - topPanelHeight - bottomMargin,
     topPanelHeight,
     sideMargin,
   };
@@ -212,7 +221,13 @@ function makeBall(w: number, h: number, towardLeft?: boolean): Ball {
   };
 }
 
-function makeInitialState(w: number, h: number, preserveTotal = false, prevTotal = 0, musicOn = true, soundsOn = true): GameState {
+function makeInitialState(
+  w: number,
+  h: number,
+  preserveTotal = false,
+  prevTotal = 0,
+  prevSettings?: Partial<GameState>,
+): GameState {
   const bounds = getBounds(w, h);
   const paddleHeight = bounds.height * GAME_CONFIG.paddleHeightRatio;
   const centerPaddleY = bounds.top + bounds.height / 2 - paddleHeight / 2;
@@ -243,8 +258,13 @@ function makeInitialState(w: number, h: number, preserveTotal = false, prevTotal
     nextScoreFxId: 1,
     totalScore: preserveTotal ? prevTotal : 0,
     sessionScore: 0,
-    musicEnabled: musicOn,
-    soundsEnabled: soundsOn,
+    musicEnabled: prevSettings?.musicEnabled ?? true,
+    soundsEnabled: prevSettings?.soundsEnabled ?? true,
+    musicVolume: prevSettings?.musicVolume ?? 1.0,
+    soundsVolume: prevSettings?.soundsVolume ?? 1.0,
+    autoPauseEnabled: prevSettings?.autoPauseEnabled ?? false,
+    language: prevSettings?.language ?? 'ru',
+    showSettings: false,
     lastPaddleTouchAt: now,
   };
 }
@@ -504,6 +524,7 @@ function updatePaddles(
   mouse: MouseControls,
   paddleSpeed: number,
   bounds: Bounds,
+  isMobile: boolean,
 ): void {
   if (mouse.active && mouse.y !== null) {
     const targetY = mouse.y - state.leftPaddle.height / 2;
@@ -515,11 +536,17 @@ function updatePaddles(
     return;
   }
 
+  // On mobile, sync paddles
+  const syncPaddles = isMobile;
+
   if (touch.left !== null) {
     // Invert Y for real mobile devices (portrait mode rotation causes inversion)
     const targetY = touch.left - state.leftPaddle.height / 2;
     const diff = targetY - state.leftPaddle.y;
     state.leftPaddle.dy = Math.sign(diff) * Math.min(Math.abs(diff), paddleSpeed * 4);
+    if (syncPaddles) {
+      state.rightPaddle.dy = state.leftPaddle.dy;
+    }
   } else if (keys.q) {
     state.leftPaddle.dy = -paddleSpeed;
   } else if (keys.a) {
@@ -533,12 +560,17 @@ function updatePaddles(
     const targetY = touch.right - state.rightPaddle.height / 2;
     const diff = targetY - state.rightPaddle.y;
     state.rightPaddle.dy = Math.sign(diff) * Math.min(Math.abs(diff), paddleSpeed * 4);
+    if (syncPaddles) {
+      state.leftPaddle.dy = state.rightPaddle.dy;
+    }
   } else if (keys.bracketRight) {
     state.rightPaddle.dy = -paddleSpeed;
   } else if (keys.quote) {
     state.rightPaddle.dy = paddleSpeed;
   } else {
-    state.rightPaddle.dy = 0;
+    if (!syncPaddles || touch.left === null) {
+      state.rightPaddle.dy = 0;
+    }
   }
 
   state.leftPaddle.y = Math.max(
@@ -593,13 +625,13 @@ function stepGame(
 
   s.scoreFx = s.scoreFx.filter((fx) => now - fx.startedAt <= fx.durationMs);
 
-  const bounds = getBounds(w, h);
+  const bounds = getBounds(w, h, isMobile);
   const grid = getGridDimensions(w, h);
   const paddleSpeed = bounds.height * GAME_CONFIG.paddleSpeedRatio;
 
   if (s.phase === 'countdown') {
     s.phaseTimer += dt;
-    if (s.phaseTimer >= 1000) {
+    if (s.phaseTimer >= 500) {
       s.phaseTimer = 0;
       s.countdown -= 1;
       if (s.countdown >= 0) {
@@ -609,7 +641,7 @@ function stepGame(
         s.phase = 'playing';
       }
     }
-    updatePaddles(s, keys, touch, mouse, paddleSpeed, bounds);
+    updatePaddles(s, keys, touch, mouse, paddleSpeed, bounds, isMobile);
     return s;
   }
 
@@ -618,11 +650,11 @@ function stepGame(
   }
 
   if (s.phase === 'gameover' || s.phase === 'finished') {
-    updatePaddles(s, keys, touch, mouse, paddleSpeed, bounds);
+    updatePaddles(s, keys, touch, mouse, paddleSpeed, bounds, isMobile);
     return s;
   }
 
-  if (isMobile) {
+  if (isMobile && s.autoPauseEnabled) {
     const hasTapLikeInput = hasActivePaddleTouch
       || touch.left !== null
       || touch.right !== null
@@ -636,7 +668,7 @@ function stepGame(
     }
   }
 
-  updatePaddles(s, keys, touch, mouse, paddleSpeed, bounds);
+  updatePaddles(s, keys, touch, mouse, paddleSpeed, bounds, isMobile);
 
   // Update ball trail
   s.ballTrail.push({ x: s.ball.pos.x, y: s.ball.pos.y });
@@ -868,10 +900,11 @@ function renderGame(
   ctx: CanvasRenderingContext2D,
   state: GameState,
   uiIcons: UiIcons,
+  isMobile: boolean = false,
 ): void {
   const { width: w, height: h } = ctx.canvas;
   const now = performance.now();
-  const bounds = getBounds(w, h);
+  const bounds = getBounds(w, h, isMobile);
   const grid = getGridDimensions(w, h);
 
   // Background
@@ -1160,6 +1193,63 @@ function renderGame(
     ctx.textAlign = 'right';
     ctx.fillText(i18n.t('controlsRight'), bounds.right - GAME_CONFIG.paddleWidth - 12, bounds.bottom - 12);
   }
+
+  // Settings modal
+  if (state.showSettings) {
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    ctx.fillRect(0, 0, w, h);
+
+    const modalWidth = Math.min(w * 0.7, 600);
+    const modalHeight = Math.min(h * 0.7, 500);
+    const modalX = (w - modalWidth) / 2;
+    const modalY = (h - modalHeight) / 2;
+
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(modalX, modalY, modalWidth, modalHeight);
+    ctx.strokeStyle = '#FFD700';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(modalX, modalY, modalWidth, modalHeight);
+
+    const fontSize = Math.round(h * 0.05);
+    const lineHeight = fontSize * 1.6;
+    let yPos = modalY + lineHeight;
+
+    ctx.font = `bold ${fontSize}px monospace`;
+    ctx.fillStyle = '#FFD700';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(i18n.t('settingsTitle'), w / 2, yPos);
+
+    yPos += lineHeight * 1.5;
+    const smallFont = Math.round(fontSize * 0.75);
+    ctx.font = `${smallFont}px monospace`;
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.textAlign = 'left';
+
+    const leftIndent = modalX + modalWidth * 0.1;
+    
+    ctx.fillText(`${i18n.t('musicVolume')}: ${Math.round(state.musicVolume * 100)}%`, leftIndent, yPos);
+    yPos += lineHeight;
+    
+    ctx.fillText(`${i18n.t('soundsVolume')}: ${Math.round(state.soundsVolume * 100)}%`, leftIndent, yPos);
+    yPos += lineHeight;
+    
+    ctx.fillText(`${i18n.t('musicEnabled')}: ${state.musicEnabled ? i18n.t('on') : i18n.t('off')}`, leftIndent, yPos);
+    yPos += lineHeight;
+    
+    ctx.fillText(`${i18n.t('soundsEnabled')}: ${state.soundsEnabled ? i18n.t('on') : i18n.t('off')}`, leftIndent, yPos);
+    yPos += lineHeight;
+    
+    ctx.fillText(`${i18n.t('autoPause')}: ${state.autoPauseEnabled ? i18n.t('on') : i18n.t('off')}`, leftIndent, yPos);
+    yPos += lineHeight;
+    
+    ctx.fillText(`${i18n.t('language')}: ${state.language.toUpperCase()}`, leftIndent, yPos);
+    yPos += lineHeight * 2;
+
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.textAlign = 'center';
+    ctx.fillText(i18n.t('settingsHint'), w / 2, yPos);
+  }
 }
 
 function getCanvasDimensions(): { width: number; height: number; portrait: boolean } {
@@ -1270,6 +1360,7 @@ export default function PongGame() {
     if (!stateRef.current?.soundsEnabled) return;
     const sound = soundsRef.current[soundKey];
     if (sound) {
+      sound.volume = stateRef.current.soundsVolume;
       sound.currentTime = 0;
       sound.play().catch(() => {});
     }
@@ -1282,6 +1373,7 @@ export default function PongGame() {
     if (stateRef.current.musicEnabled) {
       const currentTrack = musicRef.current[currentMusicIndexRef.current];
       if (currentTrack) {
+        currentTrack.volume = stateRef.current.musicVolume;
         currentTrack.play().catch(() => {});
       }
     } else {
@@ -1300,6 +1392,35 @@ export default function PongGame() {
     stateRef.current.sessionScore = stateRef.current.score;
     playSound('gameOver');
   };
+
+  // Manage music volume and pause/resume
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!stateRef.current) return;
+      
+      // Update volumes
+      musicRef.current.forEach(track => {
+        track.volume = stateRef.current!.musicVolume;
+      });
+      Object.values(soundsRef.current).forEach(sound => {
+        sound.volume = stateRef.current!.soundsVolume;
+      });
+
+      // Manage music based on phase
+      const currentTrack = musicRef.current[currentMusicIndexRef.current];
+      if (stateRef.current.phase === 'paused' || stateRef.current.showSettings) {
+        if (currentTrack && !currentTrack.paused) {
+          currentTrack.pause();
+        }
+      } else if (stateRef.current.phase === 'playing' || stateRef.current.phase === 'countdown') {
+        if (stateRef.current.musicEnabled && currentTrack && currentTrack.paused) {
+          currentTrack.play().catch(() => {});
+        }
+      }
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1354,7 +1475,7 @@ export default function PongGame() {
         isTouchDeviceRef.current,
         hasActivePaddleTouch,
       );
-      renderGame(ctx, stateRef.current, uiIconsRef.current);
+      renderGame(ctx, stateRef.current, uiIconsRef.current, isTouchDeviceRef.current);
 
       rafRef.current = requestAnimationFrame(loop);
     }
@@ -1401,15 +1522,16 @@ export default function PongGame() {
           break;
         case 'Enter':
           if (stateRef.current?.phase === 'gameover') {
-            stateRef.current = makeInitialState(canvasEl.width, canvasEl.height);
+            const prevState = stateRef.current;
+            stateRef.current = makeInitialState(canvasEl.width, canvasEl.height, false, 0, prevState);
           } else if (stateRef.current?.phase === 'finished') {
+            const prevState = stateRef.current;
             stateRef.current = makeInitialState(
               canvasEl.width,
               canvasEl.height,
               true,
-              stateRef.current.totalScore + stateRef.current.sessionScore,
-              stateRef.current.musicEnabled,
-              stateRef.current.soundsEnabled,
+              prevState.totalScore + prevState.sessionScore,
+              prevState,
             );
           } else if (stateRef.current?.phase === 'paused') {
             stateRef.current.phase = 'countdown';
@@ -1457,7 +1579,43 @@ export default function PongGame() {
       }
 
       const state = stateRef.current;
-      if (state?.phase === 'paused') {
+      if (!state) {
+        return;
+      }
+
+      const point = getGamePoint(e.clientX, e.clientY);
+      const bounds = getBounds(canvasEl.width, canvasEl.height, isTouchDeviceRef.current);
+      const panelPadding = Math.max(bounds.sideMargin, GAME_CONFIG.paddleWidth);
+      const buttons = getTopPanelButtons(canvasEl.width, bounds, state.phase, panelPadding);
+
+      // Check button clicks in top panel
+      if (point.y < bounds.topPanelHeight) {
+        if (isPointInCircle(point.x, point.y, buttons.music)) {
+          toggleMusic();
+          e.preventDefault();
+          return;
+        }
+
+        if (isPointInCircle(point.x, point.y, buttons.sounds)) {
+          toggleSounds();
+          e.preventDefault();
+          return;
+        }
+
+        if (buttons.finish !== null && isPointInCircle(point.x, point.y, buttons.finish)) {
+          finishGame();
+          e.preventDefault();
+          return;
+        }
+
+        if (isPointInCircle(point.x, point.y, buttons.settings)) {
+          state.showSettings = !state.showSettings;
+          e.preventDefault();
+          return;
+        }
+      }
+
+      if (state.phase === 'paused') {
         state.phase = 'countdown';
         state.countdown = GAME_CONFIG.countdownSeconds;
         state.phaseTimer = 0;
@@ -1515,13 +1673,12 @@ export default function PongGame() {
           canvasEl.height,
           state.phase === 'finished',
           state.totalScore + state.sessionScore,
-          state.musicEnabled,
-          state.soundsEnabled,
+          state,
         );
         return;
       }
 
-      const bounds = getBounds(canvasEl.width, canvasEl.height);
+      const bounds = getBounds(canvasEl.width, canvasEl.height, isTouchDeviceRef.current);
       const grid = getGridDimensions(canvasEl.width, canvasEl.height);
       const panelPadding = Math.max(bounds.sideMargin, GAME_CONFIG.paddleWidth);
       const buttons = getTopPanelButtons(canvasEl.width, bounds, state.phase, panelPadding);
@@ -1669,8 +1826,8 @@ export default function PongGame() {
       }
 
       const s = stateRef.current;
-      const prevBounds = getBounds(prevW, prevH);
-      const nextBounds = getBounds(canvasEl.width, canvasEl.height);
+      const prevBounds = getBounds(prevW, prevH, isTouchDeviceRef.current);
+      const nextBounds = getBounds(canvasEl.width, canvasEl.height, isTouchDeviceRef.current);
       const prevPaddleSpace = Math.max(1, prevBounds.height - s.leftPaddle.height);
       const leftRatio = (s.leftPaddle.y - prevBounds.top) / prevPaddleSpace;
       const rightRatio = (s.rightPaddle.y - prevBounds.top) / prevPaddleSpace;
@@ -1684,10 +1841,24 @@ export default function PongGame() {
       s.ball.radius = Math.min(nextBounds.width, nextBounds.height) * GAME_CONFIG.ballRadiusRatio;
     };
 
+    const handleVisibilityChange = () => {
+      if (document.hidden && stateRef.current?.phase === 'playing') {
+        stateRef.current.phase = 'paused';
+        // Pause music when losing focus
+        if (stateRef.current.musicEnabled) {
+          const currentTrack = musicRef.current[currentMusicIndexRef.current];
+          if (currentTrack) {
+            currentTrack.pause();
+          }
+        }
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mouseup', handleMouseUp);
     window.addEventListener('resize', handleResize);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     canvasEl.addEventListener('mousedown', handleMouseDown);
     canvasEl.addEventListener('mousemove', handleMouseMove);
@@ -1704,6 +1875,7 @@ export default function PongGame() {
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('resize', handleResize);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
 
       canvasEl.removeEventListener('mousedown', handleMouseDown);
       canvasEl.removeEventListener('mousemove', handleMouseMove);

@@ -115,6 +115,43 @@ interface CircularButton {
   r: number;
 }
 
+interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+interface SettingsLayout {
+  modal: Rect;
+  close: Rect;
+  rows: {
+    musicVolume: number;
+    soundsVolume: number;
+    musicEnabled: number;
+    soundsEnabled: number;
+    autoPause: number;
+    language: number;
+  };
+  labelX: number;
+  valueX: number;
+  valueWidth: number;
+  rowHeight: number;
+  titleY: number;
+  hintY: number;
+  controls: {
+    musicMinus: Rect;
+    musicPlus: Rect;
+    soundsMinus: Rect;
+    soundsPlus: Rect;
+    musicToggle: Rect;
+    soundsToggle: Rect;
+    autoPauseToggle: Rect;
+    langRu: Rect;
+    langEn: Rect;
+  };
+}
+
 interface TopPanelButtons {
   finish: CircularButton | null;
   music: CircularButton;
@@ -210,6 +247,155 @@ function isPointInCircle(x: number, y: number, button: CircularButton): boolean 
   const dx = x - button.cx;
   const dy = y - button.cy;
   return dx * dx + dy * dy <= button.r * button.r;
+}
+
+function isPointInRect(x: number, y: number, rect: Rect): boolean {
+  return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+}
+
+function clampVolume(value: number): number {
+  return Math.max(0, Math.min(1, Math.round(value * 10) / 10));
+}
+
+function getSettingsLayout(w: number, h: number): SettingsLayout {
+  const modalWidth = Math.min(w * 0.82, 760);
+  const modalHeight = Math.min(h * 0.82, 560);
+  const modalX = (w - modalWidth) / 2;
+  const modalY = (h - modalHeight) / 2;
+
+  const padding = Math.max(14, modalWidth * 0.055);
+  const titleHeight = Math.max(34, modalHeight * 0.14);
+  const rowCount = 6;
+  const rowGap = Math.max(8, modalHeight * 0.018);
+  const hintHeight = Math.max(22, modalHeight * 0.08);
+
+  const contentTop = modalY + padding + titleHeight;
+  const contentBottom = modalY + modalHeight - padding - hintHeight;
+  const totalGapsHeight = rowGap * (rowCount - 1);
+  const rowHeight = Math.max(30, Math.min(56, (contentBottom - contentTop - totalGapsHeight) / rowCount));
+
+  const labelX = modalX + padding;
+  const valueX = modalX + modalWidth * 0.56;
+  const valueRight = modalX + modalWidth - padding;
+  const valueWidth = Math.max(120, valueRight - valueX);
+
+  const squareButton = Math.max(28, Math.min(rowHeight * 0.85, 42));
+  const toggleHeight = Math.max(28, Math.min(rowHeight * 0.86, 42));
+  const toggleWidth = Math.max(110, Math.min(170, valueWidth));
+  const toggleX = valueRight - toggleWidth;
+  const closeSize = Math.max(26, Math.min(38, titleHeight * 0.6));
+
+  const getRowY = (index: number): number => contentTop + index * (rowHeight + rowGap);
+
+  const musicVolumeY = getRowY(0);
+  const soundsVolumeY = getRowY(1);
+  const musicEnabledY = getRowY(2);
+  const soundsEnabledY = getRowY(3);
+  const autoPauseY = getRowY(4);
+  const languageY = getRowY(5);
+
+  const volumeButtonY = (rowY: number) => rowY + (rowHeight - squareButton) / 2;
+  const toggleY = (rowY: number) => rowY + (rowHeight - toggleHeight) / 2;
+  const langGap = 8;
+  const langButtonWidth = Math.max(50, (valueWidth - langGap) / 2);
+
+  return {
+    modal: { x: modalX, y: modalY, w: modalWidth, h: modalHeight },
+    close: {
+      x: modalX + modalWidth - padding - closeSize,
+      y: modalY + Math.max(8, padding * 0.45),
+      w: closeSize,
+      h: closeSize,
+    },
+    rows: {
+      musicVolume: musicVolumeY,
+      soundsVolume: soundsVolumeY,
+      musicEnabled: musicEnabledY,
+      soundsEnabled: soundsEnabledY,
+      autoPause: autoPauseY,
+      language: languageY,
+    },
+    labelX,
+    valueX,
+    valueWidth,
+    rowHeight,
+    titleY: modalY + Math.max(10, padding * 0.55),
+    hintY: modalY + modalHeight - Math.max(12, padding * 0.7) - hintHeight / 2,
+    controls: {
+      musicMinus: { x: valueX, y: volumeButtonY(musicVolumeY), w: squareButton, h: squareButton },
+      musicPlus: { x: valueRight - squareButton, y: volumeButtonY(musicVolumeY), w: squareButton, h: squareButton },
+      soundsMinus: { x: valueX, y: volumeButtonY(soundsVolumeY), w: squareButton, h: squareButton },
+      soundsPlus: { x: valueRight - squareButton, y: volumeButtonY(soundsVolumeY), w: squareButton, h: squareButton },
+      musicToggle: { x: toggleX, y: toggleY(musicEnabledY), w: toggleWidth, h: toggleHeight },
+      soundsToggle: { x: toggleX, y: toggleY(soundsEnabledY), w: toggleWidth, h: toggleHeight },
+      autoPauseToggle: { x: toggleX, y: toggleY(autoPauseY), w: toggleWidth, h: toggleHeight },
+      langRu: { x: valueX, y: toggleY(languageY), w: langButtonWidth, h: toggleHeight },
+      langEn: { x: valueX + langButtonWidth + langGap, y: toggleY(languageY), w: langButtonWidth, h: toggleHeight },
+    },
+  };
+}
+
+function handleSettingsInteraction(state: GameState, point: Vec2, w: number, h: number): boolean {
+  if (!state.showSettings) {
+    return false;
+  }
+
+  const layout = getSettingsLayout(w, h);
+  const controls = layout.controls;
+
+  if (!isPointInRect(point.x, point.y, layout.modal)) {
+    state.showSettings = false;
+    return true;
+  }
+
+  if (isPointInRect(point.x, point.y, layout.close)) {
+    state.showSettings = false;
+    return true;
+  }
+
+  if (isPointInRect(point.x, point.y, controls.musicMinus)) {
+    state.musicVolume = clampVolume(state.musicVolume - 0.1);
+    return true;
+  }
+  if (isPointInRect(point.x, point.y, controls.musicPlus)) {
+    state.musicVolume = clampVolume(state.musicVolume + 0.1);
+    return true;
+  }
+
+  if (isPointInRect(point.x, point.y, controls.soundsMinus)) {
+    state.soundsVolume = clampVolume(state.soundsVolume - 0.1);
+    return true;
+  }
+  if (isPointInRect(point.x, point.y, controls.soundsPlus)) {
+    state.soundsVolume = clampVolume(state.soundsVolume + 0.1);
+    return true;
+  }
+
+  if (isPointInRect(point.x, point.y, controls.musicToggle)) {
+    state.musicEnabled = !state.musicEnabled;
+    return true;
+  }
+  if (isPointInRect(point.x, point.y, controls.soundsToggle)) {
+    state.soundsEnabled = !state.soundsEnabled;
+    return true;
+  }
+  if (isPointInRect(point.x, point.y, controls.autoPauseToggle)) {
+    state.autoPauseEnabled = !state.autoPauseEnabled;
+    return true;
+  }
+
+  if (isPointInRect(point.x, point.y, controls.langRu)) {
+    state.language = 'ru';
+    void i18n.changeLanguage('ru');
+    return true;
+  }
+  if (isPointInRect(point.x, point.y, controls.langEn)) {
+    state.language = 'en';
+    void i18n.changeLanguage('en');
+    return true;
+  }
+
+  return true;
 }
 
 function getBounds(w: number, h: number, isMobile: boolean = false): Bounds {
@@ -689,6 +875,10 @@ function stepGame(
   }
 
   if (s.phase === 'paused') {
+    return s;
+  }
+
+  if (s.showSettings) {
     return s;
   }
 
@@ -1243,56 +1433,92 @@ function renderGame(
     ctx.fillStyle = 'rgba(0,0,0,0.85)';
     ctx.fillRect(0, 0, w, h);
 
-    const modalWidth = Math.min(w * 0.7, 600);
-    const modalHeight = Math.min(h * 0.7, 500);
-    const modalX = (w - modalWidth) / 2;
-    const modalY = (h - modalHeight) / 2;
+    const layout = getSettingsLayout(w, h);
+    const { modal, close, rows, controls } = layout;
+    const titleFont = Math.round(Math.max(28, Math.min(54, modal.h * 0.1)));
+    const rowFont = Math.round(Math.max(16, Math.min(30, layout.rowHeight * 0.52)));
+    const buttonFont = Math.round(Math.max(14, Math.min(24, layout.rowHeight * 0.48)));
+    const hintFont = Math.round(Math.max(12, Math.min(20, layout.rowHeight * 0.4)));
+
+    const drawRectButton = (rect: Rect, label: string, active = false) => {
+      ctx.fillStyle = active ? 'rgba(92, 199, 92, 0.9)' : 'rgba(80,80,80,0.9)';
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.fillStyle = 'rgba(0,0,0,0.9)';
+      ctx.font = `bold ${buttonFont}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2);
+    };
+
+    const drawRowLabel = (label: string, rowY: number) => {
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.font = `bold ${rowFont}px monospace`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, layout.labelX, rowY + layout.rowHeight / 2);
+    };
 
     ctx.fillStyle = '#1a1a1a';
-    ctx.fillRect(modalX, modalY, modalWidth, modalHeight);
+    ctx.fillRect(modal.x, modal.y, modal.w, modal.h);
     ctx.strokeStyle = '#FFD700';
     ctx.lineWidth = 3;
-    ctx.strokeRect(modalX, modalY, modalWidth, modalHeight);
+    ctx.strokeRect(modal.x, modal.y, modal.w, modal.h);
 
-    const fontSize = Math.round(h * 0.05);
-    const lineHeight = fontSize * 1.6;
-    let yPos = modalY + lineHeight;
+    drawRectButton(close, '×');
 
-    ctx.font = `bold ${fontSize}px monospace`;
+    ctx.font = `bold ${titleFont}px monospace`;
     ctx.fillStyle = '#FFD700';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText(i18n.t('settingsTitle'), w / 2, yPos);
+    ctx.fillText(i18n.t('settingsTitle'), w / 2, layout.titleY);
 
-    yPos += lineHeight * 1.5;
-    const smallFont = Math.round(fontSize * 0.75);
-    ctx.font = `${smallFont}px monospace`;
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.textAlign = 'left';
-
-    const leftIndent = modalX + modalWidth * 0.1;
-    
-    ctx.fillText(`${i18n.t('musicVolume')}: ${Math.round(state.musicVolume * 100)}%`, leftIndent, yPos);
-    yPos += lineHeight;
-    
-    ctx.fillText(`${i18n.t('soundsVolume')}: ${Math.round(state.soundsVolume * 100)}%`, leftIndent, yPos);
-    yPos += lineHeight;
-    
-    ctx.fillText(`${i18n.t('musicEnabled')}: ${state.musicEnabled ? i18n.t('on') : i18n.t('off')}`, leftIndent, yPos);
-    yPos += lineHeight;
-    
-    ctx.fillText(`${i18n.t('soundsEnabled')}: ${state.soundsEnabled ? i18n.t('on') : i18n.t('off')}`, leftIndent, yPos);
-    yPos += lineHeight;
-    
-    ctx.fillText(`${i18n.t('autoPause')}: ${state.autoPauseEnabled ? i18n.t('on') : i18n.t('off')}`, leftIndent, yPos);
-    yPos += lineHeight;
-    
-    ctx.fillText(`${i18n.t('language')}: ${state.language.toUpperCase()}`, leftIndent, yPos);
-    yPos += lineHeight * 2;
-
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    drawRowLabel(i18n.t('musicVolume'), rows.musicVolume);
+    drawRectButton(controls.musicMinus, '−');
+    drawRectButton(controls.musicPlus, '+');
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.font = `bold ${rowFont}px monospace`;
     ctx.textAlign = 'center';
-    ctx.fillText(i18n.t('settingsHint'), w / 2, yPos);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(
+      `${Math.round(state.musicVolume * 100)}%`,
+      layout.valueX + layout.valueWidth / 2,
+      rows.musicVolume + layout.rowHeight / 2,
+    );
+
+    drawRowLabel(i18n.t('soundsVolume'), rows.soundsVolume);
+    drawRectButton(controls.soundsMinus, '−');
+    drawRectButton(controls.soundsPlus, '+');
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.font = `bold ${rowFont}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(
+      `${Math.round(state.soundsVolume * 100)}%`,
+      layout.valueX + layout.valueWidth / 2,
+      rows.soundsVolume + layout.rowHeight / 2,
+    );
+
+    drawRowLabel(i18n.t('musicEnabled'), rows.musicEnabled);
+    drawRectButton(controls.musicToggle, state.musicEnabled ? i18n.t('on').toUpperCase() : i18n.t('off').toUpperCase(), state.musicEnabled);
+
+    drawRowLabel(i18n.t('soundsEnabled'), rows.soundsEnabled);
+    drawRectButton(controls.soundsToggle, state.soundsEnabled ? i18n.t('on').toUpperCase() : i18n.t('off').toUpperCase(), state.soundsEnabled);
+
+    drawRowLabel(i18n.t('autoPause'), rows.autoPause);
+    drawRectButton(controls.autoPauseToggle, state.autoPauseEnabled ? i18n.t('on').toUpperCase() : i18n.t('off').toUpperCase(), state.autoPauseEnabled);
+
+    drawRowLabel(i18n.t('language'), rows.language);
+    drawRectButton(controls.langRu, '🇷🇺 RU', state.language === 'ru');
+    drawRectButton(controls.langEn, '🇺🇸 EN', state.language === 'en');
+
+    ctx.fillStyle = 'rgba(255,255,255,0.72)';
+    ctx.font = `${hintFont}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(i18n.t('settingsHint'), w / 2, layout.hintY);
   }
 }
 
@@ -1650,6 +1876,11 @@ export default function PongGame() {
       const panelPadding = Math.max(bounds.sideMargin, GAME_CONFIG.paddleWidth);
       const buttons = getTopPanelButtons(canvasEl.width, bounds, state.phase, panelPadding, state.score);
 
+      if (handleSettingsInteraction(state, point, canvasEl.width, canvasEl.height)) {
+        e.preventDefault();
+        return;
+      }
+
       // Check button clicks in top panel
       if (point.y < bounds.topPanelHeight) {
         if (isPointInCircle(point.x, point.y, buttons.music)) {
@@ -1742,6 +1973,10 @@ export default function PongGame() {
       for (let i = 0; i < e.changedTouches.length; i += 1) {
         const touch = e.changedTouches[i];
         const point = getGamePoint(touch.clientX, touch.clientY);
+
+        if (handleSettingsInteraction(state, point, canvasEl.width, canvasEl.height)) {
+          continue;
+        }
         
         // Check button clicks in top panel
         if (point.y < bounds.topPanelHeight) {

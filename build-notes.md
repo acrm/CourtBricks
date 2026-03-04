@@ -26,3 +26,5 @@
 - 2026w10-13.1 — Added settings modal, pause on visibility loss, music pause/resume, 2x faster countdown, mobile paddle sync, bottom margin for mobile, finish button repositioned, desktop button clicks, bonus icon prompts with curved arrow
 - 2026w10-13.2 — Fix rotated portrait taps and persistent total score
 - 2026w10-14.1 — Improve mobile fullscreen, finish button placement, and cumulative scoring
+- 2026w10-14.2 — Fix mobile bottom strip and interactive settings modal controls
+- 2026w10-15.1 — Improve desktop settings layout and mobile tap behavior

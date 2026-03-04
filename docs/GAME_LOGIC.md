@@ -10,7 +10,7 @@
 - The layout includes a top panel and side margins; there is no bottom panel.
 - Side margin is never smaller than one paddle width.
 - Distance from each paddle to the nearest screen edge is at least one paddle width.
-- On mobile, an additional bottom margin of `60px` is applied to improve touch reliability near device edges.
+- No artificial bottom gameplay strip is reserved; the playfield uses full available canvas height.
 
 ## Core Layout
 - The field has three zones:
@@ -50,6 +50,8 @@
   - Auto-pause on/off
   - Language selector (`ru` / `en`)
 - Settings are preserved on round restart.
+- Settings controls are interactive in both desktop and mobile versions (mouse/touch).
+- Tapping/clicking outside the modal closes it.
 
 ## Localization
 - UI strings are localized through `i18next`.

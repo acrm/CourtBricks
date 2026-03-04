@@ -31,7 +31,7 @@ void i18next.init({
         language: 'Язык',
         on: 'вкл',
         off: 'выкл',
-        settingsHint: 'Тап по кнопке настроек для выхода',
+        settingsHint: 'Нажмите по контролам или тапните вне окна для закрытия',
       },
     },
     en: {
@@ -60,7 +60,7 @@ void i18next.init({
         language: 'Language',
         on: 'on',
         off: 'off',
-        settingsHint: 'Tap settings button to close',
+        settingsHint: 'Use controls or tap outside modal to close',
       },
     },
   },

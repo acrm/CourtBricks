@@ -22,7 +22,7 @@ export const GAME_CONFIG = {
   mobileBorderWidth: 18,
   desktopBorderWidth: 10,
   borderColor: '#FFFFFF',
-  mobileBottomMargin: 60,
+  mobileBottomMargin: 0,
 
   topBottomBounceColor: 'rgba(255,255,255,0.25)',
   controlsHintColor: 'rgba(255,255,255,0.45)',

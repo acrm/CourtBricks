@@ -39,6 +39,8 @@ void i18next.init({
         modeEndless: 'БЕСКОНЕЧНО',
         settings: 'НАСТРОЙКИ',
         statistics: 'СТАТИСТИКА',
+        newGame: 'НОВАЯ ПАРТИЯ',
+        mainMenu: 'ГЛАВНОЕ МЕНЮ',
       },
     },
     en: {
@@ -74,7 +76,10 @@ void i18next.init({
         mode5min: '5 MIN',
         modeEndless: 'ENDLESS',
         settings: 'SETTINGS',
-        statistics: 'STATISTICS',      },
+        statistics: 'STATISTICS',
+        newGame: 'NEW GAME',
+        mainMenu: 'MAIN MENU',
+      },
     },
   },
 });

@@ -35,7 +35,10 @@
 
 ## Top Panel UI
 - Top panel color is gold.
-- Left side: score label and `Finish` button (`Finish` appears during gameplay only and is placed to the right of score).
+- Left side: score label.
+- Endless mode: `Finish` button appears during gameplay.
+- Timed modes (`1:00`, `3:00`, `5:00`): countdown timer is shown instead of `Finish`.
+- Score, `Finish`, and timer are laid out to avoid overlap with score values up to three digits.
 - Right side: `Music`, `Sounds`, `Settings` circular buttons.
 - Buttons are clickable on both desktop and mobile.
 - In canvas, Font Awesome icons are rendered from local SVG assets.
@@ -80,7 +83,7 @@
 - Offer duration: `10s`.
 - Time between offers: `10s`.
 - Offer appears only if:
-  - Ball stayed on one side for at least `3s`.
+  - Ball stayed on one side for at least `5s`.
   - Current score is enough to buy the offer.
 - Offer appears on the side opposite to current ball side.
 - Offered color is never equal to current ball color.
@@ -98,12 +101,16 @@
 - Finished screen shows:
   - Round score
   - Total cumulative score
-- Tap or `Enter` starts a new round.
+- Finished screen has action buttons:
+  - `New Game`
+  - `Main Menu`
+- `Enter` starts a new round with the current selected mode.
 
 ## Audio
 - Audio files are loaded from `public/audio` using `BASE_URL`-aware paths.
 - Music tracks play in sequence.
-- Music pauses during pause state (including tab focus loss) and resumes from the same position.
+- On tab focus loss, all music tracks are stopped and reset.
+- During in-game pause/settings, current music track is paused and resumed.
 - Music and sound volumes are controlled independently.
 - Sound effects are mapped to gameplay events:
   - Paddle hit

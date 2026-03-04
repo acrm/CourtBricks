@@ -29,3 +29,7 @@
 - 2026w10-14.2 — Fix mobile bottom strip and interactive settings modal controls
 - 2026w10-15.1 — Improve desktop settings layout and mobile tap behavior
 - 2026w10-15.2 — Fix music autoplay, add bonus icons, mode selection screen and game statistics framework
+- 2026w10-15.3 — Add timed mode top-panel timer and end-screen action buttons
+- 2026w10-16.1 — Finalize timed HUD spacing and finish screen navigation actions
+- 2026w10-16.2 — Refine timed top HUD spacing and end-screen action handling
+- 2026w10-17.1 — Complete finish screen actions and timed mode top-panel behavior

@@ -286,6 +286,36 @@ function selectGameMode(state: GameState, mode: GameMode): GameState {
   return state;
 }
 
+function startNewRoundFromCurrentState(
+  prevState: GameState,
+  width: number,
+  height: number,
+): GameState {
+  const nextState = makeInitialState(width, height, prevState);
+  return selectGameMode(nextState, prevState.gameMode);
+}
+
+function formatModeTimer(modeTimeMs: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(modeTimeMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function getEndScreenButtons(width: number, height: number): { newGame: Rect; mainMenu: Rect } {
+  const buttonWidth = Math.min(320, width * 0.34);
+  const buttonHeight = Math.min(74, Math.max(44, height * 0.1));
+  const gap = Math.max(16, width * 0.035);
+  const totalWidth = buttonWidth * 2 + gap;
+  const startX = (width - totalWidth) / 2;
+  const y = height * 0.73;
+
+  return {
+    newGame: { x: startX, y, w: buttonWidth, h: buttonHeight },
+    mainMenu: { x: startX + buttonWidth + gap, y, w: buttonWidth, h: buttonHeight },
+  };
+}
+
 function resolvePublicAssetPath(path: string): string {
   const normalized = path.replace(/^\/+/, '');
   const base = import.meta.env.BASE_URL.endsWith('/')
@@ -297,9 +327,8 @@ function resolvePublicAssetPath(path: string): string {
 function getTopPanelButtons(
   width: number,
   bounds: Bounds,
-  phase: Phase,
+  showFinishButton: boolean,
   panelPadding: number,
-  score: number,
 ): TopPanelButtons {
   const radius = Math.max(16, bounds.topPanelHeight * 0.46);
   const cy = bounds.topPanelHeight / 2;
@@ -309,7 +338,7 @@ function getTopPanelButtons(
   const soundsCx = settingsCx - (radius * 2 + gap);
   const musicCx = soundsCx - (radius * 2 + gap);
 
-  const scoreLabel = `${i18n.t('score')}: ${score}`;
+  const scoreLabel = `${i18n.t('score')}: 999`;
   const estimatedCharWidth = Math.max(8, bounds.topPanelHeight * 0.24);
   const estimatedScoreWidth = scoreLabel.length * estimatedCharWidth;
   const finishDesiredCx = panelPadding + estimatedScoreWidth + radius + Math.max(14, radius * 0.8);
@@ -317,7 +346,7 @@ function getTopPanelButtons(
   const finishCx = Math.max(panelPadding + radius, Math.min(finishDesiredCx, finishMaxCx));
 
   return {
-    finish: phase === 'playing'
+    finish: showFinishButton
       ? { cx: finishCx, cy, r: radius }
       : null,
     music: { cx: musicCx, cy, r: radius },
@@ -1310,7 +1339,8 @@ function renderGame(
   });
 
   // Circular icon buttons in top panel
-  const buttons = getTopPanelButtons(w, bounds, state.phase, panelPadding, state.score);
+  const showFinishButton = state.phase === 'playing' && state.gameMode === 'endless';
+  const buttons = getTopPanelButtons(w, bounds, showFinishButton, panelPadding);
 
   const drawRoundButton = (
     button: CircularButton,
@@ -1358,6 +1388,36 @@ function renderGame(
 
   if (buttons.finish !== null) {
     drawRoundButton(buttons.finish, 'rgba(214, 76, 76, 0.9)', 'finish', '⛳', 1.24);
+  }
+
+  // Timer in timed modes (instead of finish button)
+  if (state.gameMode !== 'endless' && state.phase !== 'mode-select') {
+    const timerText = formatModeTimer(state.modeTimeMs);
+    const estimatedCharWidth = Math.max(8, bounds.topPanelHeight * 0.24);
+    const safeScoreLabel = `${i18n.t('score')}: 999`;
+    const safeScoreWidth = safeScoreLabel.length * estimatedCharWidth;
+    const timerLeft = panelPadding + safeScoreWidth + Math.max(12, bounds.topPanelHeight * 0.2);
+    const timerRight = buttons.music.cx - buttons.music.r - Math.max(12, bounds.topPanelHeight * 0.2);
+
+    if (timerRight > timerLeft) {
+      const timerCenterX = (timerLeft + timerRight) / 2;
+      const maxTimerWidth = timerRight - timerLeft;
+      let timerFontSize = Math.round(bounds.topPanelHeight * 0.48);
+      const minTimerFontSize = 14;
+
+      ctx.font = `bold ${timerFontSize}px monospace`;
+      while (timerFontSize > minTimerFontSize && ctx.measureText(timerText).width > maxTimerWidth) {
+        timerFontSize -= 1;
+        ctx.font = `bold ${timerFontSize}px monospace`;
+      }
+
+      if (ctx.measureText(timerText).width <= maxTimerWidth) {
+        ctx.fillStyle = 'rgba(0,0,0,0.85)';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(timerText, timerCenterX, bounds.topPanelHeight / 2);
+      }
+    }
   }
 
   // Tetris zone highlight
@@ -1524,7 +1584,25 @@ function renderGame(
 
     ctx.font = `${Math.round(h * 0.045)}px monospace`;
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    ctx.fillText(i18n.t('restartHint'), w / 2, h * 0.56);
+    ctx.fillText(i18n.t('sessionScore') + `: ${state.sessionScore}`, w / 2, h * 0.56);
+
+    const endButtons = getEndScreenButtons(w, h);
+    const endButtonFont = Math.round(Math.max(18, Math.min(34, h * 0.04)));
+    const drawEndButton = (rect: Rect, label: string, fill: string) => {
+      ctx.fillStyle = fill;
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.fillStyle = 'rgba(0,0,0,0.9)';
+      ctx.font = `bold ${endButtonFont}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2);
+    };
+
+    drawEndButton(endButtons.newGame, i18n.t('newGame'), 'rgba(92, 199, 92, 0.9)');
+    drawEndButton(endButtons.mainMenu, i18n.t('mainMenu'), 'rgba(120,120,120,0.85)');
   }
 
   if (state.phase === 'finished') {
@@ -1547,7 +1625,25 @@ function renderGame(
 
     ctx.font = `${Math.round(h * 0.035)}px monospace`;
     ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.fillText(i18n.t('finishedHint'), w / 2, h * 0.7);
+    ctx.fillText(i18n.t('finishedHint'), w / 2, h * 0.67);
+
+    const endButtons = getEndScreenButtons(w, h);
+    const endButtonFont = Math.round(Math.max(18, Math.min(34, h * 0.04)));
+    const drawEndButton = (rect: Rect, label: string, fill: string) => {
+      ctx.fillStyle = fill;
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.fillStyle = 'rgba(0,0,0,0.9)';
+      ctx.font = `bold ${endButtonFont}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2);
+    };
+
+    drawEndButton(endButtons.newGame, i18n.t('newGame'), 'rgba(92, 199, 92, 0.9)');
+    drawEndButton(endButtons.mainMenu, i18n.t('mainMenu'), 'rgba(120,120,120,0.85)');
   }
 
   if (state.phase === 'countdown' && state.paddleHitCount === 0) {
@@ -1888,7 +1984,7 @@ export default function PongGame() {
   };
 
   const finishGame = () => {
-    if (!stateRef.current || stateRef.current.phase !== 'playing') return;
+    if (!stateRef.current || stateRef.current.phase !== 'playing' || stateRef.current.gameMode !== 'endless') return;
     finalizeRoundScore(stateRef.current);
     stateRef.current.phase = 'finished';
     playSound('gameOver');
@@ -2046,12 +2142,9 @@ export default function PongGame() {
           e.preventDefault();
           break;
         case 'Enter':
-          if (stateRef.current?.phase === 'gameover') {
+          if (stateRef.current?.phase === 'gameover' || stateRef.current?.phase === 'finished') {
             const prevState = stateRef.current;
-            stateRef.current = makeInitialState(canvasEl.width, canvasEl.height, prevState);
-          } else if (stateRef.current?.phase === 'finished') {
-            const prevState = stateRef.current;
-            stateRef.current = makeInitialState(canvasEl.width, canvasEl.height, prevState);
+            stateRef.current = startNewRoundFromCurrentState(prevState, canvasEl.width, canvasEl.height);
           } else if (stateRef.current?.phase === 'paused') {
             stateRef.current.phase = 'countdown';
             stateRef.current.countdown = GAME_CONFIG.countdownSeconds;
@@ -2105,6 +2198,22 @@ export default function PongGame() {
       const point = getGamePoint(e.clientX, e.clientY);
       const bounds = getBounds(canvasEl.width, canvasEl.height, isTouchDeviceRef.current);
 
+      if (state.phase === 'gameover' || state.phase === 'finished') {
+        const endButtons = getEndScreenButtons(canvasEl.width, canvasEl.height);
+        if (isPointInRect(point.x, point.y, endButtons.newGame)) {
+          stateRef.current = startNewRoundFromCurrentState(state, canvasEl.width, canvasEl.height);
+          e.preventDefault();
+          return;
+        }
+        if (isPointInRect(point.x, point.y, endButtons.mainMenu)) {
+          stateRef.current = makeInitialState(canvasEl.width, canvasEl.height, state);
+          e.preventDefault();
+          return;
+        }
+        e.preventDefault();
+        return;
+      }
+
       // Handle mode selection screen
       if (state.phase === 'mode-select') {
         const modeButtonHeight = canvasEl.height * 0.12;
@@ -2148,7 +2257,8 @@ export default function PongGame() {
       }
 
       const panelPadding = Math.max(bounds.sideMargin, GAME_CONFIG.paddleWidth);
-      const buttons = getTopPanelButtons(canvasEl.width, bounds, state.phase, panelPadding, state.score);
+        const showFinishButtonForState = state.phase === 'playing' && state.gameMode === 'endless';
+        const buttons = getTopPanelButtons(canvasEl.width, bounds, showFinishButtonForState, panelPadding);
 
       if (handleSettingsInteraction(state, point, canvasEl.width, canvasEl.height)) {
         e.preventDefault();
@@ -2235,14 +2345,27 @@ export default function PongGame() {
       }
 
       if (state.phase === 'gameover' || state.phase === 'finished') {
-        stateRef.current = makeInitialState(canvasEl.width, canvasEl.height, state);
+        const endButtons = getEndScreenButtons(canvasEl.width, canvasEl.height);
+
+        for (let i = 0; i < e.changedTouches.length; i += 1) {
+          const touchPoint = getGamePoint(e.changedTouches[i].clientX, e.changedTouches[i].clientY);
+          if (isPointInRect(touchPoint.x, touchPoint.y, endButtons.newGame)) {
+            stateRef.current = startNewRoundFromCurrentState(state, canvasEl.width, canvasEl.height);
+            return;
+          }
+          if (isPointInRect(touchPoint.x, touchPoint.y, endButtons.mainMenu)) {
+            stateRef.current = makeInitialState(canvasEl.width, canvasEl.height, state);
+            return;
+          }
+        }
         return;
       }
 
       const bounds = getBounds(canvasEl.width, canvasEl.height, isTouchDeviceRef.current);
       const grid = getGridDimensions(canvasEl.width, canvasEl.height);
       const panelPadding = Math.max(bounds.sideMargin, GAME_CONFIG.paddleWidth);
-      const buttons = getTopPanelButtons(canvasEl.width, bounds, state.phase, panelPadding, state.score);
+      const showFinishButtonForState = state.phase === 'playing' && state.gameMode === 'endless';
+      const buttons = getTopPanelButtons(canvasEl.width, bounds, showFinishButtonForState, panelPadding);
 
       for (let i = 0; i < e.changedTouches.length; i += 1) {
         const touch = e.changedTouches[i];
